@@ -22,6 +22,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     _success() { echo -e "${GREEN}[成功] $1${NC}" >&2; }
     _warn()    { echo -e "${YELLOW}[注意] $1${NC}" >&2; }
     _warning() { _warn "$1"; }  # 别名兼容
+    _ok()      { _success "$1"; }  # 别名兼容
     _error()   { echo -e "${RED}[错误] $1${NC}" >&2; }
 fi
 
