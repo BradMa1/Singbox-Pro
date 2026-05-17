@@ -92,9 +92,20 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
     _get_public_ip() {
         [ -n "$server_ip" ] && [ "$server_ip" != "null" ] && { echo "$server_ip"; return; }
         local ip
+
+        # 优先从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
+        ip=$(ip -4 addr show scope global 2>/dev/null | grep -v 'docker\|br-\|veth\|wgcf\|lo' | grep -oP 'inet \K[\d.]+' | head -1)
+        if [ -n "$ip" ] && ! echo "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.)'; then
+            server_ip="$ip"
+            echo "$ip"
+            return
+        fi
+
+        # 网卡无公网 IP → API 查询
         ip=$(timeout 5 curl -s4 --max-time 2 icanhazip.com 2>/dev/null || \
              timeout 5 curl -s4 --max-time 2 ipinfo.io/ip 2>/dev/null || \
-             timeout 5 curl -s4 --max-time 2 ifconfig.me 2>/dev/null)
+             timeout 5 curl -s4 --max-time 2 ifconfig.me 2>/dev/null || \
+             timeout 5 curl -s4 --max-time 2 ip.sb 2>/dev/null)
         [ -z "$ip" ] && ip=$(timeout 5 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
                               timeout 5 curl -s6 --max-time 2 ipinfo.io/ip 2>/dev/null)
         server_ip="$ip"
