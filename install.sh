@@ -79,15 +79,13 @@ _step_deps() {
         ubuntu|debian)
             export DEBIAN_FRONTEND=noninteractive
             # 修复常见的已 EOL Debian 源问题（bullseye 等）
+            # 1. 注释掉主源文件中的 backports 行
             if [ -f /etc/apt/sources.list ]; then
-                sed -i 's/deb.debian.org\/debian/archive.debian.org\/debian/g' \
-                    /etc/apt/sources.list 2>/dev/null || true
-                # 注释掉已失效的 backports 行（常见问题源）
-                grep -q "backports" /etc/apt/sources.list 2>/dev/null && \
-                    sed -i '/backports/s/^deb/# deb/' /etc/apt/sources.list 2>/dev/null || true
+                sed -i '/backports/s/^deb/# deb/' /etc/apt/sources.list 2>/dev/null || true
             fi
-            for f in /etc/apt/sources.list.d/*.list; do
-                [ -f "$f" ] && sed -i 's/deb.debian.org\/debian/archive.debian.org\/debian/g' "$f" 2>/dev/null || true
+            # 2. 删除 backports 源列表文件（常见问题：/etc/apt/sources.list.d/backports.list）
+            for f in /etc/apt/sources.list.d/*; do
+                [ -f "$f" ] && grep -q "backports" "$f" 2>/dev/null && rm -f "$f"
             done
             apt-get update -qq 2>/dev/null || apt-get update -qq
             apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 >/dev/null 2>&1
