@@ -381,23 +381,18 @@ _relay_import_token() {
         *) in_type="vless"; in_flow="xtls-rprx-vision" ;;
     esac
 
-    # TLS 证书检测（非 VLESS 协议需要证书）
+    # TLS 证书（非 VLESS 协议需要，无证书则自动生成自签证书）
     if [ "$in_type" != "vless" ]; then
         local cert_path="/etc/sing-box/certs/fullchain.pem"
         local key_path="/etc/sing-box/certs/privkey.pem"
         if [ ! -f "$cert_path" ] || [ ! -f "$key_path" ]; then
-            _warn "TLS 证书未找到！"
-            _warn "  期望路径: ${cert_path}"
-            _warn "  期望路径: ${key_path}"
-            echo ""
-            echo "  请先申请证书并放置到上述路径，或使用 acme.sh / certbot:"
-            echo "  acme.sh --issue -d 你的域名 --standalone"
-            echo "  acme.sh --install-cert -d 你的域名 \\"
-            echo "    --fullchain-file ${cert_path} --key-file ${key_path}"
-            echo ""
-            echo -n "  证书不存在，是否继续? (y/N): "
-            read -r cert_confirm
-            [[ ! "$cert_confirm" =~ ^[Yy]$ ]] && { _warn "已取消"; read -p "按回车键返回..."; return; }
+            _info "未检测到 TLS 证书，自动生成自签证书..."
+            mkdir -p /etc/sing-box/certs
+            openssl req -x509 -newkey rsa:4096 \
+                -keyout "$key_path" -out "$cert_path" \
+                -days 3650 -nodes -subj "/CN=singbox-pro" 2>/dev/null
+            _ok "自签证书已生成 (${cert_path})"
+            _warn "自签证书客户端需开启「跳过证书验证 / allowInsecure」"
         fi
     fi
 
