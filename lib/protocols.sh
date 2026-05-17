@@ -129,6 +129,7 @@ _proto_tuic_config() {
     "congestion_control": "bbr",
     "tls": {
         "enabled": true,
+        "alpn": ["h3"],
         "certificate_path": "${SINGBOX_DIR}/cert.pem",
         "key_path": "${SINGBOX_DIR}/key.pem"
     }
@@ -164,6 +165,7 @@ _proto_hy2_config() {
     ],
     "tls": {
         "enabled": true,
+        "alpn": ["h3"],
         "certificate_path": "${SINGBOX_DIR}/cert.pem",
         "key_path": "${SINGBOX_DIR}/key.pem"
     }
