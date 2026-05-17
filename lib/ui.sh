@@ -423,7 +423,7 @@ _ui_add_tuic_quick() {
     local inbound_json=$(_proto_tuic_config "$port" "$uuid" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
-    echo "tuic|${name}|${port}|${uuid}||||${password}|"
+    echo "tuic|${name}|${port}|${uuid}|||${password}|"
 }
 
 _ui_add_hy2_quick() {
