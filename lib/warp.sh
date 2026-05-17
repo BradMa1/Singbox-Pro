@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # warp.sh — WARP SOCKS5 代理模块
-# 使用 warp-go 为 sing-box 提供全局 WARP 出口
+# 使用 warp-plus 为 sing-box 提供全局 WARP 出口
 # ============================================================
 export WARP_MOD_VERSION="2.0.0"
 
@@ -15,45 +15,50 @@ if ! declare -f _info >/dev/null 2>&1; then
 fi
 
 WARP_DIR="${WARP_DIR:-/usr/local/etc/warp}"
-WARP_BIN="${WARP_BIN:-${WARP_DIR}/warp-go}"
+WARP_BIN="${WARP_BIN:-${WARP_DIR}/warp-plus}"
+WARP_VERSION="${WARP_VERSION:-1.2.6}"
 WARP_SOCKS_PORT="${WARP_SOCKS_PORT:-40000}"
 
-# --- 安装 warp-go ---
+# --- 安装 warp-plus ---
 _warp_install() {
     if [ -f "$WARP_BIN" ]; then
         _info "WARP 已安装"
         return 0
     fi
 
-    _info "正在安装 warp-go..."
+    _info "正在安装 warp-plus v${WARP_VERSION}..."
     mkdir -p "$WARP_DIR"
 
     local arch=$(_get_arch)
-    local warp_url="https://github.com/bradfordwagner/warp-go/releases/latest/download/warp-go-linux-${arch}"
+    local base_url="https://github.com/bepass-org/warp-plus/releases/download/v${WARP_VERSION}"
+    local zip_name="warp-plus_linux-${arch}.zip"
+    local tmp_zip="${WARP_DIR}/${zip_name}"
 
-    if _download "$warp_url" "$WARP_BIN"; then
-        chmod +x "$WARP_BIN"
-        _success "warp-go 安装完成"
-        return 0
+    # 下载 zip
+    if ! _download "${base_url}/${zip_name}" "$tmp_zip"; then
+        _warn "主源下载失败，尝试镜像..."
+        if ! _download "https://ghproxy.net/${base_url}/${zip_name}" "$tmp_zip"; then
+            _error "warp-plus 下载失败"
+            return 1
+        fi
     fi
 
-    # 镜像回退
-    _warn "主源下载失败，尝试镜像..."
-    local mirror_url="https://ghproxy.net/${warp_url}"
-    if _download "$mirror_url" "$WARP_BIN"; then
-        chmod +x "$WARP_BIN"
-        _success "warp-go 安装完成 (镜像)"
-        return 0
+    # 解压
+    if ! command -v unzip &>/dev/null; then
+        _pkg_install unzip 2>/dev/null || { _error "请先安装 unzip"; rm -f "$tmp_zip"; return 1; }
     fi
+    unzip -o "$tmp_zip" -d "$WARP_DIR" >/dev/null 2>&1 || { _error "解压失败"; rm -f "$tmp_zip"; return 1; }
+    rm -f "$tmp_zip"
 
-    _error "warp-go 安装失败"
-    return 1
+    chmod +x "$WARP_BIN"
+    _success "warp-plus v${WARP_VERSION} 安装完成"
+    return 0
 }
 
 # --- 启动 WARP SOCKS5 代理 ---
 _warp_start() {
     if ! [ -f "$WARP_BIN" ]; then
-        _error "warp-go 未安装，请先运行安装"
+        _error "warp-plus 未安装，请先运行安装"
         return 1
     fi
 
@@ -66,7 +71,7 @@ _warp_start() {
     _info "正在启动 WARP SOCKS5 代理 (端口 ${WARP_SOCKS_PORT})..."
     mkdir -p "$WARP_DIR"
 
-    nohup "$WARP_BIN" --socks5 "127.0.0.1:${WARP_SOCKS_PORT}" \
+    nohup "$WARP_BIN" -b "127.0.0.1:${WARP_SOCKS_PORT}" \
         > "${WARP_DIR}/warp.log" 2>&1 &
     local pid=$!
     echo "$pid" > "${WARP_DIR}/warp.pid"
@@ -93,7 +98,7 @@ _warp_stop() {
         kill "$pid" 2>/dev/null || true
         rm -f "${WARP_DIR}/warp.pid"
     fi
-    pkill -f "warp-go" 2>/dev/null || true
+    pkill -f "warp-plus" 2>/dev/null || true
     _success "WARP 已停止"
 }
 

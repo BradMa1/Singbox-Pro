@@ -160,7 +160,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 | Perplexity | ✅ |
 | 自定义域名 | ✅ 支持关键词/后缀匹配 |
 
-- **安装**：自动安装 warp-go，添加 sing-box 分流 outbound 和路由规则
+- **安装**：自动安装 warp-plus，添加 sing-box 分流 outbound 和路由规则
 - **查看**：显示 WARP 状态、测试 AI 服务是否解锁
 - **卸载**：自动清除分流规则和 WARP
 

@@ -808,7 +808,7 @@ _ui_warp_menu() {
         echo -e "  状态: $(_warp_get_status)"
         echo ""
 
-        echo -e "    ${GREEN}[1]${NC} 安装 WARP          (下载并安装 warp-go)"
+        echo -e "    ${GREEN}[1]${NC} 安装 WARP          (下载并安装 warp-plus)"
         echo -e "    ${GREEN}[2]${NC} 启动 WARP          (启动 SOCKS5 代理在 127.0.0.1:${WARP_SOCKS_PORT})"
         echo -e "    ${GREEN}[3]${NC} 停止 WARP"
         echo -e "    ${GREEN}[4]${NC} 添加到 sing-box     (将 WARP 加入 proxy 选择器)"
