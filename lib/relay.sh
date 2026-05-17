@@ -192,7 +192,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/sing-box run -c ${RELAY_CONFIG_DIR}/config.json
+ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
 RestartSec=10s
 
