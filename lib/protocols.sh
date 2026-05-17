@@ -319,25 +319,17 @@ _proto_remove_inbound() {
 # ============================================================
 
 _proto_sync_outbounds() {
-    # 收集所有入站 tag
-    local tags_json=$(jq -c '[.inbounds[].tag]' "$CONFIG_FILE" 2>/dev/null || echo '[]')
+    # 构建 proxy selector outbounds 列表
+    # 注意: selector 只能引用 outbound tag，不能引用 inbound tag
+    # VPS 服务端场景下，selector 只需 direct + 可选 warp
+    local outbounds='["direct"]'
 
-    # 保留 WARP 出站 tag (如果存在)
-    local warp_tag=""
     if jq -e '.outbounds[] | select(.tag == "warp-socks5")' "$CONFIG_FILE" >/dev/null 2>&1; then
-        warp_tag='"warp-socks5"'
-    fi
-
-    # 构建 proxy outbounds: ["direct", inbounds..., warp]
-    local outbounds_json
-    if [ -n "$warp_tag" ]; then
-        outbounds_json=$(jq -c --argjson tags "$tags_json" '["direct"] + $tags + ['"$warp_tag"']' <<< '{}' 2>/dev/null || echo '["direct"]')
-    else
-        outbounds_json=$(jq -c --argjson tags "$tags_json" '["direct"] + $tags' <<< '{}' 2>/dev/null || echo '["direct"]')
+        outbounds='["direct","warp-socks5"]'
     fi
 
     _atomic_modify_json "$CONFIG_FILE" \
-        "(.outbounds[] | select(.tag == \"proxy\") | .outbounds) = ${outbounds_json}" 2>/dev/null || true
+        "(.outbounds[] | select(.tag == \"proxy\") | .outbounds) = ${outbounds}" 2>/dev/null || true
 }
 
 # ============================================================
