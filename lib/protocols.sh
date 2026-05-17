@@ -71,7 +71,7 @@ _proto_reality_uri() {
     local fp="chrome"
     local pk=$("$SINGBOX_BIN" generate reality-keypair 2>/dev/null | grep "PublicKey:" | awk '{print $2}' 2>/dev/null || echo "")
 
-    echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pk}&sid=${short_id}&type=tcp&headerType=none#${ep}"
+    echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pk}&sid=${short_id}#${ep}"
 }
 
 # ============================================================
@@ -181,7 +181,7 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1&mport=${port}#${ep}"
+    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
 }
 
 # ============================================================

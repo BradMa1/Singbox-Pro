@@ -364,7 +364,7 @@ _ui_add_reality_quick() {
     local short_id=$(openssl rand -hex 8 2>/dev/null || _random_hex 8)
 
     local name
-    [ -n "$name_prefix" ] && name="${name_prefix}-reality" || name="Reality-${port}"
+    [ -n "$name_prefix" ] && name="${name_prefix}-vless-reality" || name="VLESS-Reality-${port}"
 
     local inbound_json=$(_proto_reality_config "$port" "$uuid" "$sni" "$short_id" "xtls-rprx-vision" "")
     _proto_add_inbound "$inbound_json" || return 1
@@ -402,7 +402,7 @@ _ui_add_anytls_quick() {
     local inbound_json=$(_proto_anytls_config "$port" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
-    echo "anytls|${name}|${port}|${password}||||"
+    echo "anytls|${name}|${port}||||${password}||"
 }
 
 _ui_add_tuic_quick() {
@@ -423,7 +423,7 @@ _ui_add_tuic_quick() {
     local inbound_json=$(_proto_tuic_config "$port" "$uuid" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
-    echo "tuic|${name}|${port}|${uuid}||${password}||"
+    echo "tuic|${name}|${port}|${uuid}||||${password}|"
 }
 
 _ui_add_hy2_quick() {
@@ -443,7 +443,7 @@ _ui_add_hy2_quick() {
     local inbound_json=$(_proto_hy2_config "$port" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
-    echo "hy2|${name}|${port}|${password}||||"
+    echo "hy2|${name}|${port}||||${password}||"
 }
 
 _ui_add_vmess_ws_quick() {
@@ -459,7 +459,7 @@ _ui_add_vmess_ws_quick() {
     local ws_path="/$(_random_hex 8)"
 
     local name
-    [ -n "$name_prefix" ] && name="${name_prefix}-vmess" || name="VMess-${port}"
+    [ -n "$name_prefix" ] && name="${name_prefix}-vmess-ws" || name="VMess-WS-${port}"
 
     local inbound_json=$(_proto_vmess_ws_config "$port" "$uuid" "$ws_path")
     _proto_add_inbound "$inbound_json" || return 1
@@ -491,7 +491,6 @@ _ui_argo_menu() {
         echo ""
         echo -e "  ${GREEN}【固定隧道 — 需要 Cloudflare 账号】${NC}"
         echo -e "    ${GREEN}[2]${NC} 添加固定隧道 (需 Token)"
-        echo -e "    ${GREEN}[8]${NC} 临时隧道转固定隧道"
         echo ""
         echo -e "  ${GREEN}【管理】${NC}"
         echo -e "    ${GREEN}[3]${NC} 查看 Argo 节点链接"
@@ -499,6 +498,7 @@ _ui_argo_menu() {
         echo -e "    ${GREEN}[5]${NC} 查看隧道日志"
         echo -e "    ${GREEN}[6]${NC} 停止所有隧道"
         echo -e "    ${GREEN}[7]${NC} 安装/更新 cloudflared"
+        echo -e "    ${GREEN}[8]${NC} 临时隧道转固定隧道"
         echo ""
         echo -e "  ${YELLOW}【获取固定隧道 Token】${NC}"
         echo -e "    1. 访问 https://one.dash.cloudflare.com/"

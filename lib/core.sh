@@ -147,24 +147,33 @@ _country_cn() {
     esac
 }
 
-# --- VPS 地区 (带缓存) ---
+# --- VPS 地区 (带缓存，多 API 回退) ---
 region_cache=""
 _get_region() {
     [ -n "$region_cache" ] && { echo "$region_cache"; return; }
-    local data
-    data=$(timeout 3 curl -s --max-time 2 ipinfo.io/json 2>/dev/null)
-    if [ -n "$data" ]; then
-        local country=$(echo "$data" | jq -r '.country // ""' 2>/dev/null)
-        local city=$(echo "$data" | jq -r '.city // ""' 2>/dev/null)
-        if [ -n "$country" ]; then
-            local country_cn=$(_country_cn "$country")
-            [ -n "$city" ] && region_cache="${country_cn} ${city}" || region_cache="${country_cn}"
-        else
-            region_cache="未知"
-        fi
-    else
-        region_cache="未知"
+    local data country city country_cn
+
+    # 尝试主 API: ipinfo.io
+    data=$(timeout 3 curl -s --max-time 2 'https://ipinfo.io/json' 2>/dev/null)
+    if [ -z "$data" ] || ! echo "$data" | jq -e '.country' >/dev/null 2>&1; then
+        # 备用 API: ip-api.com
+        data=$(timeout 3 curl -s --max-time 2 'http://ip-api.com/json/?fields=country,city' 2>/dev/null)
     fi
+    if [ -z "$data" ] || ! echo "$data" | jq -e '.country' >/dev/null 2>&1; then
+        # 备用 API: freeipapi.com
+        data=$(timeout 3 curl -s --max-time 2 'https://freeipapi.com/api/json' 2>/dev/null)
+    fi
+
+    if [ -n "$data" ]; then
+        country=$(echo "$data" | jq -r '.country // .countryCode // .country_code // ""' 2>/dev/null)
+        city=$(echo "$data" | jq -r '.city // .cityName // ""' 2>/dev/null)
+        if [ -n "$country" ] && [ "$country" != "null" ]; then
+            country_cn=$(_country_cn "$country")
+            [ -n "$city" ] && [ "$city" != "null" ] && region_cache="${country_cn} ${city}" || region_cache="${country_cn}"
+        fi
+    fi
+
+    [ -z "$region_cache" ] && region_cache="未知"
     echo "$region_cache"
 }
 
