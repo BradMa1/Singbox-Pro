@@ -182,7 +182,7 @@ LISTEN_PORT="${USER_PORT:-$(shuf -i 20000-65000 -n 1 2>/dev/null || echo 20443)}
 RELAY_CONFIG_DIR="/etc/sing-box"
 mkdir -p "$RELAY_CONFIG_DIR"
 cat > "${RELAY_CONFIG_DIR}/config.json" <<EOF
-{"log":{"level":"info"},"inbounds":[{"type":"vless","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true,"handshake":{"server":"addons.mozilla.org","server_port":443}}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
+{"log":{"level":"info"},"inbounds":[{"type":"vless","tag":"vless-in","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
 EOF
 
 cat > /etc/systemd/system/sing-box.service <<'SYSTEMD'
