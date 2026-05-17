@@ -179,6 +179,7 @@ REALITY_SID=$(sing-box generate rand 8 --hex 2>/dev/null || echo "0123456789abcd
 read -p "监听端口（回车随机 20000-65000）: " USER_PORT
 LISTEN_PORT="${USER_PORT:-$(shuf -i 20000-65000 -n 1 2>/dev/null || echo 20443)}"
 
+RELAY_CONFIG_DIR="/etc/sing-box"
 mkdir -p "$RELAY_CONFIG_DIR"
 cat > "${RELAY_CONFIG_DIR}/config.json" <<EOF
 {"log":{"level":"info"},"inbounds":[{"type":"vless","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true,"handshake":{"server":"addons.mozilla.org","server_port":443}}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
@@ -217,12 +218,18 @@ RELAYEOF
     done
 
     chmod +x "$relay_script"
-    _success "线路机脚本已生成: $relay_script"
 
     echo ""
+    echo -e "${CYAN}=== 线路机安装脚本内容（选中复制后到线路机执行）===${NC}"
+    echo -e "${YELLOW}提示：下方为完整脚本内容，全选复制，粘贴到线路机执行${NC}"
+    echo ""
+    cat "$relay_script"
+    echo ""
+    echo -e "${CYAN}--- 完整脚本文件路径 ---${NC}"
+    echo -e "  ${GREEN}${relay_script}${NC}"
     echo -e "  ${CYAN}上传并在线路机上执行:${NC}"
-    echo -e "  ${GREEN}scp ${relay_script} root@线路机IP:/tmp/${NC}"
-    echo -e "  ${GREEN}ssh root@线路机IP 'bash /tmp/relay-install.sh'${NC}"
+    echo -e "  scp ${relay_script} root@线路机IP:/tmp/"
+    echo -e "  ssh root@线路机IP 'bash /tmp/relay-install.sh'"
     echo ""
     read -p "按回车键返回..."
 }
