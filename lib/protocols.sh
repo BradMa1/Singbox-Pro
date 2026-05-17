@@ -376,7 +376,7 @@ _proto_get_uri() {
 _proto_list_inbounds() {
     [ ! -f "$CONFIG_FILE" ] && return 1
 
-    jq -c '.inbounds[] | {tag, type, listen_port}' "$CONFIG_FILE" 2>/dev/null
+    jq -c '.inbounds[]' "$CONFIG_FILE" 2>/dev/null
 }
 
 _proto_get_inbound_detail() {
