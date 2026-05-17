@@ -1074,14 +1074,14 @@ _ui_modify_node() {
     echo -e "  端口: ${sel_port}"
     echo ""
 
-    read -p "新端口号 (回车保持 ${sel_port}): " new_port
+    # 新端口为空时保持不变
     [ -z "$new_port" ] && { _info "未修改，返回"; read -p "按回车键返回..."; return; }
 
     # 验证端口号
     [[ ! "$new_port" =~ ^[0-9]+$ ]] && { _error "无效端口号"; read -p "按回车键返回..."; return; }
     [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ] && { _error "端口号范围 1-65535"; read -p "按回车键返回..."; return; }
 
-    # 检查新端口是否被占用 (排除自己)
+    # 端口有变化才检查占用
     if [ "$new_port" != "$sel_port" ]; then
         local proto="tcp"
         case "$sel_type" in tuic|hysteria2) proto="udp" ;; esac
@@ -1090,25 +1090,50 @@ _ui_modify_node() {
             read -p "按回车键返回..."
             return
         fi
+
+        # 端口变化 → 自动更新名称（替换末尾的旧端口号）
+        # 例如 VLESS-Reality-13190 → VLESS-Reality-13191
+        # 或 RackNerd-美国黑五-vless-reality → RackNerd-美国黑五-vless-reality-13191
+        sel_name="${sel_name/%-[0-9]*/-${new_port}}"
+        # 如果名称不包含数字端口后缀，直接追加
+        if ! echo "$sel_name" | grep -qE "[0-9]+$" && ! echo "$sel_name" | grep -qE "${new_port}$"; then
+            sel_name="${sel_name}-${new_port}"
+        fi
     fi
 
-    read -p "新名称 (回车保持 ${sel_name}): " new_name
-    [ -n "$new_name" ] && sel_name="$new_name"
+    # 计算新 tag（tag 里嵌了端口）
+    local new_tag="${sel_tag/%-[0-9]*/-${new_port}}"
+    if ! echo "$new_tag" | grep -qE "[0-9]+$" && ! echo "$new_tag" | grep -qE "${new_port}$"; then
+        new_tag="${sel_tag}-${new_port}"
+    fi
 
     # 备份配置
     _sb_backup_config 2>/dev/null || true
 
-    # 修改 config.json 中的端口
-    _atomic_modify_json "$CONFIG_FILE" "(.inbounds[] | select(.tag==\"$sel_tag\") | .listen_port) = $new_port" || {
+    # 修改 config.json: 更新 tag 和端口
+    _atomic_modify_json "$CONFIG_FILE" \
+        "(.inbounds[] | select(.tag==\"$sel_tag\") | .tag) = \"$new_tag\"" || {
+        _error "配置修改失败"
+        read -p "按回车键返回..."
+        return
+    }
+    _atomic_modify_json "$CONFIG_FILE" \
+        "(.inbounds[] | select(.tag==\"$new_tag\") | .listen_port) = $new_port" || {
         _error "配置修改失败"
         read -p "按回车键返回..."
         return
     }
 
-    # 更新元数据
+    # 更新元数据: 删除旧 key，插入新 key
     if [ -f "$METADATA_FILE" ]; then
-        _atomic_modify_json "$METADATA_FILE" ".protocols.\"$sel_tag\".port = $new_port" 2>/dev/null || true
-        _atomic_modify_json "$METADATA_FILE" ".protocols.\"$sel_tag\".name = \"$sel_name\"" 2>/dev/null || true
+        local meta_exists=$(jq -r ".protocols.\"$sel_tag\" // empty" "$METADATA_FILE" 2>/dev/null)
+        if [ -n "$meta_exists" ]; then
+            local meta_entry=$(jq -r ".protocols.\"$sel_tag\"" "$METADATA_FILE" 2>/dev/null)
+            _atomic_modify_json "$METADATA_FILE" "del(.protocols.\"$sel_tag\")" 2>/dev/null
+            local meta_json=$(echo "$meta_entry" | jq --arg port "$new_port" --arg name "$sel_name" \
+                '. + {port: ($port|tonumber), name: $name}')
+            _atomic_modify_json "$METADATA_FILE" ".protocols += {\"$new_tag\": $meta_json}" 2>/dev/null
+        fi
     fi
 
     _success "节点已更新: ${sel_name} → 端口 ${new_port}"
