@@ -1228,51 +1228,88 @@ _ui_uninstall() {
     echo -e "${RED}║    警告: 此操作将删除所有配置和数据!     ║${NC}"
     echo -e "${RED}╚════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -ne "${RED}确认卸载 Singbox-Pro? [y/N]: ${NC}"
+    echo -e "  ${YELLOW}将清理以下内容:${NC}"
+    echo "    - sing-box 核心 & 配置 (inbounds/outbounds/路由)"
+    echo "    - 所有节点链接 & 元数据"
+    echo "    - Argo 隧道 (cloudflared)"
+    echo "    - WARP (warp-plus / wgcf)"
+    echo "    - 中转 & 端口转发配置"
+    echo "    - 防火墙规则 (iptables)"
+    echo "    - systemd 服务 & 定时任务"
+    echo ""
+
+    echo -ne "${RED}确认卸载 Singbox-Pro? 输入 DELETE 确认: ${NC}"
     read -r confirm
 
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        _info "已取消"
+    if [ "$confirm" != "DELETE" ]; then
+        _info "已取消 (需要输入大写 DELETE)"
         read -p "按回车键返回..."
         return
     fi
 
     _info "正在卸载..."
 
-    # 停止所有服务
+    # --- 1. 停止所有服务 ---
     _manage_service "stop" 2>/dev/null || true
     systemctl disable sing-box 2>/dev/null || true
-
-    # 停止 Argo 隧道
-    _argo_stop_all 2>/dev/null || true
-
-    # 停止 WARP
-    _warp_stop 2>/dev/null || true
-
-    # 删除文件
-    rm -f "$SINGBOX_BIN"
-    rm -f "$CLOUDFLARED_BIN"
-    rm -f "$WARP_BIN"
     rm -f /etc/systemd/system/sing-box.service
     rm -f /etc/init.d/sing-box
 
-    # 删除配置目录
+    # --- 2. 停止 Argo 隧道 ---
+    _argo_stop_all 2>/dev/null || true
+    pkill -f "cloudflared" 2>/dev/null || true
+
+    # --- 3. 停止 WARP (warp-plus) ---
+    _warp_stop 2>/dev/null || true
+
+    # --- 4. 清理 wgcf WireGuard (旧版 WARP，会劫持路由) ---
+    if command -v wg-quick &>/dev/null; then
+        wg-quick down wgcf 2>/dev/null || true
+    fi
+    ip link delete wgcf 2>/dev/null || true
+    rm -f /etc/wireguard/wgcf.conf 2>/dev/null || true
+    rm -f /usr/local/bin/wgcf 2>/dev/null || true
+
+    # --- 5. 清理 iptables 规则 (避免残留规则导致异常) ---
+    # 读取所有已配置端口并清理 ACCEPT 规则
+    local ports=()
+    if [ -f "${SINGBOX_DIR}/config.json" ]; then
+        while IFS= read -r port; do
+            [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && ports+=("$port")
+        done < <(jq -r '.inbounds[]?.listen_port' "${SINGBOX_DIR}/config.json" 2>/dev/null || true)
+    fi
+    for port in "${ports[@]}"; do
+        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
+        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null || true
+    done
+
+    # --- 6. 删除文件 ---
+    rm -f "$SINGBOX_BIN"
+    rm -f "$CLOUDFLARED_BIN"
+    rm -f "$WARP_BIN"
     rm -rf "$SINGBOX_DIR"
     rm -rf "$WARP_DIR"
     rm -rf "$RELAY_CONFIG_DIR"
 
     # 清理临时文件
-    rm -f /tmp/singbox_argo_*.pid /tmp/singbox_argo_*.log
-    rm -f /tmp/singbox_argo_fixed_*.pid /tmp/singbox_argo_fixed_*.log
+    rm -f /tmp/singbox_argo_*.pid /tmp/singbox_argo_*.log /tmp/singbox_argo_fixed_*.pid /tmp/singbox_argo_fixed_*.log
 
+    # --- 7. 清理 crontab 定时任务 ---
+    if command -v crontab &>/dev/null; then
+        crontab -l 2>/dev/null | grep -v 'sing-box\|singbox\|warp' | crontab - 2>/dev/null || true
+    fi
+
+    # --- 8. 重载 systemd ---
     systemctl daemon-reload 2>/dev/null || true
 
+    # --- 9. 验证 ---
     _success "Singbox-Pro 卸载完成"
     echo ""
-    echo "已删除的文件:"
-    echo "  - $SINGBOX_BIN"
-    echo "  - $SINGBOX_DIR"
-    echo "  - 所有 Argo/WARP/Relay 配置"
+    echo "已删除:"
+    [ ! -f "$SINGBOX_BIN" ] && echo "  ✓ sing-box 核心" || echo "  ✗ sing-box 核心 (手动删除)"
+    [ ! -d "$SINGBOX_DIR" ] && echo "  ✓ 配置目录" || echo "  ✗ 配置目录 (手动删除)"
+    [ ! -f "$CLOUDFLARED_BIN" ] && echo "  ✓ cloudflared" || echo "  ✗ cloudflared (手动删除)"
+    [ ! -f "$WARP_BIN" ] && echo "  ✓ warp-plus" || echo "  ✗ warp-plus (手动删除)"
     echo ""
 
     read -p "按回车键退出..."
