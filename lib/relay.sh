@@ -45,7 +45,7 @@ _relay_gen_token() {
             # 复制 TLS 配置，但移除 reality.handshake（outbound 不支持该字段）
             local tls=$(echo "$node" | jq -c '.tls // {}')
             if [ "$(echo "$tls" | jq '.enabled // false')" = "true" ]; then
-                local tls_clean=$(echo "$tls" | jq 'if .reality then .reality |= del(.handshake) else . end')
+                local tls_clean=$(echo "$tls" | jq 'if .reality then .reality |= del(.handshake, .private_key) else . end')
                 token_json="${token_json},\"tls\":${tls_clean}"
             fi
             local trans=$(echo "$node" | jq -c '.transport // {}')
