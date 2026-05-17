@@ -31,8 +31,10 @@ _proto_reality_config() {
     [ -z "$short_id" ] && short_id=$(openssl rand -hex 8 2>/dev/null || _random_hex 8)
     [ -z "$server_ip" ] && server_ip=$(_get_public_ip)
 
-    local private_key=$("$SINGBOX_BIN" generate reality-keypair 2>/dev/null | grep "PrivateKey:" | awk '{print $2}')
-    [ -z "$private_key" ] && private_key=$("$SINGBOX_BIN" generate rand --hex 32 2>/dev/null)
+    local keypair=$("$SINGBOX_BIN" generate reality-keypair 2>/dev/null)
+    local private_key=$(echo "$keypair" | grep "PrivateKey:" | awk '{print $2}')
+    _REALITY_PUBKEY=$(echo "$keypair" | grep "PublicKey:" | awk '{print $2}')
+    [ -z "$private_key" ] && { private_key=$("$SINGBOX_BIN" generate rand --hex 32 2>/dev/null); _REALITY_PUBKEY=""; }
 
     cat << EOF
 {
@@ -68,10 +70,15 @@ _proto_reality_uri() {
     local short_id="$5" name="$6" flow="${7:-xtls-rprx-vision}"
     local ep=$(_url_encode "$name")
 
+    local pbk="$8"
+    [ -z "$pbk" ] && {
+        # 回退: 从 config.json 提取私钥后推算公钥不可行，尝试元数据
+        # 实际不应走到这里 — 新节点必定传 pbk
+        pbk=""
+    }
     local fp="chrome"
-    local pk=$("$SINGBOX_BIN" generate reality-keypair 2>/dev/null | grep "PublicKey:" | awk '{print $2}' 2>/dev/null || echo "")
 
-    echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pk}&sid=${short_id}#${ep}"
+    echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
 }
 
 # ============================================================
@@ -345,8 +352,8 @@ _proto_get_uri() {
 
     case "$proto" in
         reality)
-            local uuid="$1" sni="${2:-$DEFAULT_SNI}" short_id="$3" flow="${4:-xtls-rprx-vision}"
-            _proto_reality_uri "$uuid" "$server_ip" "$port" "$sni" "$short_id" "$name" "$flow"
+            local uuid="$1" sni="${2:-$DEFAULT_SNI}" short_id="$3" flow="${4:-xtls-rprx-vision}" pbk="${5:-}"
+            _proto_reality_uri "$uuid" "$server_ip" "$port" "$sni" "$short_id" "$name" "$flow" "$pbk"
             ;;
         anytls)
             local password="$1"

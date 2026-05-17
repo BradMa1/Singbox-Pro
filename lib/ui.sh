@@ -305,7 +305,8 @@ _ui_add_node_menu() {
 
         case $proto in
             reality)
-                local uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "$sni" "$sid" "$name")
+                local pbk="${ws_path}"
+                local uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "$sni" "$sid" "$name" "" "$pbk")
                 echo -e "  ${GREEN}● ${name}${NC} (VLESS Reality)"
                 echo -e "    端口: ${port}  域名: ${sni}  SID: ${sid}"
                 echo -e "    ${GREEN}${uri}${NC}"
@@ -367,6 +368,7 @@ _ui_add_reality_quick() {
     [ -n "$name_prefix" ] && name="${name_prefix}-vless-reality" || name="VLESS-Reality-${port}"
 
     local inbound_json=$(_proto_reality_config "$port" "$uuid" "$sni" "$short_id" "xtls-rprx-vision" "")
+    local pbk="$_REALITY_PUBKEY"
     _proto_add_inbound "$inbound_json" || return 1
 
     local meta_json=$(jq -n \
@@ -375,14 +377,15 @@ _ui_add_reality_quick() {
         --arg uuid "$uuid" \
         --arg sni "$sni" \
         --arg sid "$short_id" \
+        --arg pbk "${pbk}" \
         --arg port "$port" \
         --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
-        '{($tag): {name: $name, type: "reality", uuid: $uuid, sni: $sni, short_id: $sid, port: ($port|tonumber), created_at: $created}}')
+        '{($tag): {name: $name, type: "reality", uuid: $uuid, sni: $sni, short_id: $sid, public_key: $pbk, port: ($port|tonumber), created_at: $created}}')
 
     [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
     _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
-    echo "reality|${name}|${port}|${uuid}|${sni}|${short_id}|||"
+    echo "reality|${name}|${port}|${uuid}|${sni}|${short_id}||${pbk}|"
 }
 
 _ui_add_anytls_quick() {
@@ -906,7 +909,8 @@ _ui_view_nodes() {
                 local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
                 local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
                 local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
-                local uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow")
+                local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                local uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
                 echo -e "      链接: ${GREEN}${uri}${NC}"
                 ;;
             anytls)
