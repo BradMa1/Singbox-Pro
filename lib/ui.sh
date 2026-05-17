@@ -367,8 +367,9 @@ _ui_add_reality_quick() {
     local name
     [ -n "$name_prefix" ] && name="${name_prefix}-vless-reality" || name="VLESS-Reality-${port}"
 
-    local inbound_json=$(_proto_reality_config "$port" "$uuid" "$sni" "$short_id" "xtls-rprx-vision" "")
-    local pbk="$_REALITY_PUBKEY"
+    local output=$(_proto_reality_config "$port" "$uuid" "$sni" "$short_id" "xtls-rprx-vision" "")
+    local inbound_json=$(echo "$output" | sed '$d')
+    local pbk=$(echo "$output" | tail -1 | sed 's/^REALITY_PBK=//')
     _proto_add_inbound "$inbound_json" || return 1
 
     local meta_json=$(jq -n \

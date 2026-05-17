@@ -33,8 +33,8 @@ _proto_reality_config() {
 
     local keypair=$("$SINGBOX_BIN" generate reality-keypair 2>/dev/null)
     local private_key=$(echo "$keypair" | grep "PrivateKey:" | awk '{print $2}')
-    _REALITY_PUBKEY=$(echo "$keypair" | grep "PublicKey:" | awk '{print $2}')
-    [ -z "$private_key" ] && { private_key=$("$SINGBOX_BIN" generate rand --hex 32 2>/dev/null); _REALITY_PUBKEY=""; }
+    local public_key=$(echo "$keypair" | grep "PublicKey:" | awk '{print $2}')
+    [ -z "$private_key" ] && { private_key=$("$SINGBOX_BIN" generate rand --hex 32 2>/dev/null); public_key=""; }
 
     cat << EOF
 {
@@ -63,6 +63,8 @@ _proto_reality_config() {
     }
 }
 EOF
+    # 公钥跟在 JSON 后输出，调用方需解析
+    echo "REALITY_PBK=${public_key}"
 }
 
 _proto_reality_uri() {
