@@ -960,32 +960,55 @@ _ui_delete_node() {
     [ ${#tags[@]} -eq 0 ] && { echo "  暂无节点"; read -p "按回车键返回..."; return; }
 
     echo ""
-    read -p "选择要删除的节点 [1-${#tags[@]}] (0 返回): " del_choice
+    echo -e "  ${YELLOW}支持多选 (如 1 3) 或直接回车删除全部${NC}"
+    read -p "选择要删除的节点 [1-${#tags[@]}] (0 返回): " del_input
 
-    [[ ! "$del_choice" =~ ^[0-9]+$ ]] && return
-    [ "$del_choice" -eq 0 ] && return
-    [ "$del_choice" -lt 1 ] || [ "$del_choice" -gt ${#tags[@]} ] && { _warn "无效选择"; sleep 1; return; }
+    # 去除首尾空格
+    del_input=$(echo "$del_input" | xargs 2>/dev/null || echo "$del_input")
 
-    local sel_tag="${tags[$((del_choice - 1))]}"
-    local sel_port=$(echo "$sel_tag" | grep -oE '[0-9]+$')
+    # 0 返回
+    [ "$del_input" = "0" ] && return
 
-    echo -ne "${RED}确认删除节点 ${sel_tag}? [y/N]: ${NC}"
+    # 直接回车 = 全选
+    local selected=()
+    if [ -z "$del_input" ]; then
+        for ((i=0; i<${#tags[@]}; i++)); do
+            selected+=("$i")
+        done
+    else
+        for num in $del_input; do
+            [[ "$num" =~ ^[0-9]+$ ]] || continue
+            [ "$num" -ge 1 ] && [ "$num" -le ${#tags[@]} ] && selected+=("$((num - 1))")
+        done
+    fi
+
+    [ ${#selected[@]} -eq 0 ] && { _warn "未选择有效节点"; sleep 1; return; }
+
+    # 确认
+    local sel_names=""
+    for idx in "${selected[@]}"; do
+        sel_names="${sel_names} ${tags[$idx]}"
+    done
+    echo -ne "${RED}确认删除以下节点? ${sel_names} [y/N]: ${NC}"
     read -r confirm
-    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         return
     fi
 
-    _proto_remove_inbound "$sel_tag"
+    for idx in "${selected[@]}"; do
+        local sel_tag="${tags[$idx]}"
+        local sel_port=$(echo "$sel_tag" | grep -oE '[0-9]+$')
 
-    # 清理元数据
-    [ -f "$METADATA_FILE" ] && _atomic_modify_json "$METADATA_FILE" "del(.protocols.\"$sel_tag\")" 2>/dev/null || true
+        _proto_remove_inbound "$sel_tag"
 
-    # 清理相关 Argo 隧道
-    _argo_stop "$sel_port" 2>/dev/null || true
-    [ -f "$ARGO_METADATA_FILE" ] && _argo_remove_metadata "$sel_tag" 2>/dev/null || true
+        [ -f "$METADATA_FILE" ] && _atomic_modify_json "$METADATA_FILE" "del(.protocols.\"$sel_tag\")" 2>/dev/null || true
+
+        _argo_stop "$sel_port" 2>/dev/null || true
+        [ -f "$ARGO_METADATA_FILE" ] && _argo_remove_metadata "$sel_tag" 2>/dev/null || true
+    done
 
     _manage_service "restart"
-    _success "节点已删除"
+    _success "已删除 ${#selected[@]} 个节点"
     read -p "按回车键返回..."
 }
 
