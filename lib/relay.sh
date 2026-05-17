@@ -42,8 +42,12 @@ _relay_gen_token() {
             local flow=$(echo "$node" | jq -r '.users[0].flow // ""')
             token_json="${token_json},\"uuid\":\"${uuid}\""
             [ -n "$flow" ] && [ "$flow" != "null" ] && token_json="${token_json},\"flow\":\"${flow}\""
+            # 复制 TLS 配置，但移除 reality.handshake（outbound 不支持该字段）
             local tls=$(echo "$node" | jq -c '.tls // {}')
-            [ "$(echo "$tls" | jq '.enabled // false')" = "true" ] && token_json="${token_json},\"tls\":${tls}"
+            if [ "$(echo "$tls" | jq '.enabled // false')" = "true" ]; then
+                local tls_clean=$(echo "$tls" | jq 'if .reality then .reality |= del(.handshake) else . end')
+                token_json="${token_json},\"tls\":${tls_clean}"
+            fi
             local trans=$(echo "$node" | jq -c '.transport // {}')
             [ "$trans" != "{}" ] && token_json="${token_json},\"transport\":${trans}"
             ;;
@@ -263,24 +267,50 @@ _relay_gen_landing_token() {
     done <<< "$nodes"
 
     echo ""
-    echo -n "  选择节点编号: "; read -r ch
-    [ -z "${relay_choices[$ch]}" ] && { _error "无效选择"; read -p "按回车键返回..."; return; }
+    echo -n "  选择节点编号 (多选用空格分隔，如 1 3 5，回车默认全选): "; read -r ch
 
-    local sel="${relay_choices[$ch]}"
-    local sel_tag=$(echo "$sel" | jq -r '.tag // "relay"')
-    local token=$(_relay_gen_token "$sel_tag" "$sel")
-    [ -z "$token" ] && { _error "生成 Token 失败"; read -p "按回车键返回..."; return; }
+    # 空输入默认为全选
+    if [ -z "$ch" ]; then
+        ch=""
+        for idx in "${!relay_choices[@]}"; do
+            ch="${ch}${idx} "
+        done
+        ch=${ch% }  # 去掉末尾空格
+    fi
 
-    local b64=$(echo -n "$token" | base64 -w0 2>/dev/null || echo -n "$token" | base64 | tr -d '\n')
+    # 支持空格分隔多选，逐个生成 Token
+    local all_tokens=""
+    for sel_num in $ch; do
+        sel_num=$(echo "$sel_num" | tr -d ' ')  # 去掉可能的空格
+        [ -z "${relay_choices[$sel_num]}" ] && { _error "无效选择: $sel_num"; continue; }
+
+        local sel="${relay_choices[$sel_num]}"
+        local sel_tag=$(echo "$sel" | jq -r '.tag // "relay"')
+        local sel_type=$(echo "$sel" | jq -r '.type')
+        local sel_port=$(echo "$sel" | jq -r '.listen_port')
+        local token=$(_relay_gen_token "$sel_tag" "$sel")
+        if [ -z "$token" ]; then
+            _error "节点 ${sel_tag} (${sel_type}:${sel_port}) Token 生成失败，跳过"
+            continue
+        fi
+
+        local b64=$(echo -n "$token" | base64 -w0 2>/dev/null || echo -n "$token" | base64 | tr -d '\n')
+        all_tokens="${all_tokens}--- ${sel_tag} (${sel_type}:${sel_port}) ---\n${b64}\n\n"
+    done
+
+    if [ -z "$all_tokens" ]; then
+        _error "没有任何 Token 生成成功"
+        read -p "按回车键返回..."
+        return
+    fi
 
     echo ""
-    echo -e "  ${CYAN}=== 落地 Token（Base64，复制到中转机）===${NC}"
-    echo -e "  ${GREEN}${b64}${NC}"
+    echo -e "  ${CYAN}=== 落地 Token 列表（复制到中转机）===${NC}"
+    echo -e "${YELLOW}提示：每组 --- 分隔一个节点，中转机 sb → 8 → 3 逐个导入${NC}"
     echo ""
-    echo -e "  ${CYAN}=== 落地 Token（JSON，供查看）===${NC}"
-    echo "$token" | jq .
+    echo -e "${GREEN}${all_tokens}${NC}"
     echo ""
-    _info "中转机操作: sb → 8 → 3，粘贴上面的 Base64 Token"
+    _info "中转机操作: sb → 8 → 3，粘贴上面的 Base64 Token（每个节点单独导入）"
     echo ""
 
     echo -n "保存 Token 到文件（回车跳过）: "; read -r save_t
