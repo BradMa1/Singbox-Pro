@@ -480,9 +480,17 @@ _relay_import_token() {
 
     echo "$tmp_cfg" > "$CONFIG_FILE"
 
-    # 保存元数据
+    # 保存中转元数据
     local entry="{\"local_port\":${lport},\"in_type\":\"${in_type}\",\"relay_tag\":\"${rtag}\",\"landing\":\"${rserver}:${rport}\",\"out_type\":\"${rtype}\"}"
     jq ". += [$entry]" "$RELAY_META" > "${RELAY_META}.tmp" && mv "${RELAY_META}.tmp" "$RELAY_META"
+
+    # VLESS Reality 入口的公钥存入 metadata，供节点链接生成
+    if [ "$in_type" = "vless" ] && [ -n "${in_pub:-}" ]; then
+        [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+        local meta_pbk=$(jq -n --arg tag "${in_tag}" --arg pbk "${in_pub}" \
+            '{($tag): {public_key: $pbk}}')
+        _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_pbk" 2>/dev/null || true
+    fi
 
     _manage_service "start" 2>/dev/null || true
     sleep 2
