@@ -1411,6 +1411,9 @@ _ui_uninstall() {
 
     # --- 1. 停止所有服务 ---
     _manage_service "stop" 2>/dev/null || true
+    # 强制杀掉残留的手动后台进程（非 systemd/openrc 管理的情况下）
+    pkill -f "sing-box run" 2>/dev/null || true
+    sleep 1
     systemctl disable sing-box 2>/dev/null || true
     rm -f /etc/systemd/system/sing-box.service
     rm -f /etc/init.d/sing-box
