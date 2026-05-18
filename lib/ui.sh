@@ -815,18 +815,20 @@ _ui_warp_menu() {
         echo -e "    ${GREEN}[1]${NC} 安装 WARP          (下载并安装 warp-plus)"
         echo -e "    ${GREEN}[2]${NC} 启动 WARP          (启动 SOCKS5 代理在 127.0.0.1:${WARP_SOCKS_PORT})"
         echo -e "    ${GREEN}[3]${NC} 停止 WARP"
-        echo -e "    ${GREEN}[4]${NC} 添加到 sing-box     (将 WARP 加入 proxy 选择器)"
+        echo -e "    ${GREEN}[4]${NC} 添加到 sing-box     (将 WARP 加入 proxy 选择器 + 配置域名分流)"
         echo -e "    ${RED}[5]${NC} 卸载 WARP"
         echo ""
-        echo -e "  ${YELLOW}【自定义分流域名】${NC}"
-        echo -e "    默认分流: openai, gemini, claude, bard, copilot"
-        echo -e "    如需自定义，在安装后会提示输入额外域名"
+        echo -e "  ${YELLOW}【域名分流管理】${NC}"
+        echo -e "    ${GREEN}[6]${NC} 查看分流域名列表"
+        echo -e "    ${GREEN}[7]${NC} 添加自定义域名      (如 netflix.com, disney.com)"
+        echo -e "    ${GREEN}[8]${NC} 删除自定义域名"
+        echo -e "    ${GREEN}[9]${NC} 重置到默认域名列表"
         echo ""
 
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
 
-        read -p "  请输入选项 [0-5]: " warp_choice
+        read -p "  请输入选项 [0-9]: " warp_choice
 
         case $warp_choice in
             1)
@@ -846,8 +848,8 @@ _ui_warp_menu() {
                 _warp_add_outbound 2>/dev/null || { _error "添加失败"; read -p "按回车键返回..."; continue; }
                 _manage_service restart 2>/dev/null
                 echo ""
-                _info "WARP 已添加到 proxy 选择器。"
-                _info "使用客户端切换出站到 'warp-socks5' 即可走 WARP 出口"
+                _info "WARP 已添加到 proxy 选择器并配置域名分流规则。"
+                _info "OpenAI/Claude/Gemini 等域名流量将自动走 WARP 出口"
                 read -p "按回车键返回..."
                 ;;
             5)
@@ -856,10 +858,138 @@ _ui_warp_menu() {
                 [ "$confirm" = "y" ] || [ "$confirm" = "Y" ] && _warp_uninstall
                 read -p "按回车键返回..."
                 ;;
+            6)
+                _ui_warp_list_domains
+                ;;
+            7)
+                _ui_warp_add_domain
+                ;;
+            8)
+                _ui_warp_remove_domain
+                ;;
+            9)
+                echo -ne "确认重置 WARP 分流域名到默认列表? [y/N]: "
+                read -r confirm
+                [ "$confirm" = "y" ] || [ "$confirm" = "Y" ] && {
+                    _warp_reset_domains
+                    _manage_service restart 2>/dev/null
+                }
+                read -p "按回车键返回..."
+                ;;
             0) return ;;
             *) _warn "无效选项"; sleep 1 ;;
         esac
     done
+}
+
+# --- WARP 查看域名列表 ---
+_ui_warp_list_domains() {
+    clear
+    echo -e "${CYAN}=== WARP 分流域名列表 ===${NC}"
+    echo ""
+
+    echo -e "  ${GREEN}【默认域名 (不可删除)】${NC}"
+    for d in $_WARP_DEFAULT_DOMAINS; do
+        echo -e "    $d"
+    done
+
+    echo ""
+    echo -e "  ${YELLOW}【自定义域名】${NC}"
+    _warp_init_metadata 2>/dev/null || true
+    local custom=$(jq -r '.custom_domains | join("\n")' "$WARP_METADATA_FILE" 2>/dev/null || echo "")
+    if [ -n "$custom" ]; then
+        echo "$custom" | while read -r d; do
+            [ -n "$d" ] && echo -e "    $d"
+        done
+    else
+        echo "    (无)"
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}说明: 分流规则已自动添加，OpenAI/Claude/Gemini 等域名走 WARP${NC}"
+    read -p "按回车键返回..."
+}
+
+# --- WARP 添加自定义域名 ---
+_ui_warp_add_domain() {
+    clear
+    echo -e "${CYAN}=== 添加自定义 WARP 分流域名 ===${NC}"
+    echo ""
+    echo -e "  当前默认域名: ${_WARP_DEFAULT_DOMAINS}"
+    echo ""
+    echo -e "  ${YELLOW}提示: 输入完整域名，如 netflix.com、disney.com${NC}"
+    echo -e "  支持子域名，如 *.google.com 表示所有 .google.com 子域名"
+    echo ""
+    read -p "请输入域名 (多个用空格分隔): " input_domains
+
+    [ -z "$input_domains" ] && { _warn "未输入域名"; return; }
+
+    local added=0
+    for domain in $input_domains; do
+        # 简单校验
+        if echo "$domain" | grep -qE '^[a-zA-Z0-9*.-]+$'; then
+            _warp_add_domain "$domain" && added=$((added + 1))
+        else
+            _warn "域名格式无效: $domain，跳过"
+        fi
+    done
+
+    if [ "$added" -gt 0 ]; then
+        _manage_service restart 2>/dev/null
+        _success "已添加 $added 个域名到 WARP 分流，服务已重启"
+    fi
+    read -p "按回车键返回..."
+}
+
+# --- WARP 删除自定义域名 ---
+_ui_warp_remove_domain() {
+    clear
+    echo -e "${CYAN}=== 删除自定义 WARP 分流域名 ===${NC}"
+    echo ""
+
+    local custom_domains=()
+    while IFS= read -r d; do
+        [ -n "$d" ] && custom_domains+=("$d")
+    done < <(jq -r '.custom_domains[]' "$WARP_METADATA_FILE" 2>/dev/null || true)
+
+    if [ ${#custom_domains[@]} -eq 0 ]; then
+        echo "  暂无自定义域名"
+        read -p "按回车键返回..."
+        return
+    fi
+
+    echo -e "  ${CYAN}当前自定义域名:${NC}"
+    for i in "${!custom_domains[@]}"; do
+        echo -e "    ${GREEN}[$((i+1))]${NC} ${custom_domains[$i]}"
+    done
+    echo ""
+    echo -e "  ${YELLOW}支持多选 (如 1 3) 或直接回车删除全部${NC}"
+    read -p "选择要删除的域名 [1-${#custom_domains[@]}] (0 返回): " del_input
+
+    del_input=$(echo "$del_input" | xargs 2>/dev/null || echo "$del_input")
+    [ "$del_input" = "0" ] && return
+
+    local selected=()
+    if [ -z "$del_input" ]; then
+        for ((i=0; i<${#custom_domains[@]}; i++)); do
+            selected+=("$i")
+        done
+    else
+        for num in $del_input; do
+            [[ "$num" =~ ^[0-9]+$ ]] || continue
+            [ "$num" -ge 1 ] && [ "$num" -le ${#custom_domains[@]} ] && selected+=("$((num - 1))")
+        done
+    fi
+
+    [ ${#selected[@]} -eq 0 ] && { _warn "未选择"; return; }
+
+    for idx in "${selected[@]}"; do
+        _warp_remove_domain "${custom_domains[$idx]}"
+    done
+
+    _manage_service restart 2>/dev/null
+    _success "已删除 ${#selected[@]} 个域名，服务已重启"
+    read -p "按回车键返回..."
 }
 
 # ============================================================
