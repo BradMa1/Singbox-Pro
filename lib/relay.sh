@@ -46,6 +46,10 @@ _relay_gen_token() {
             local tls=$(echo "$node" | jq -c '.tls // {}')
             if [ "$(echo "$tls" | jq '.enabled // false')" = "true" ]; then
                 local tls_clean=$(echo "$tls" | jq 'if .reality then .reality |= del(.handshake, .private_key) | .reality.short_id = (.reality.short_id[0] // "") else . end')
+                # VLESS Reality outbound 必须有 utls 字段指定浏览器指纹
+                if [ "$(echo "$tls" | jq '.reality.enabled // false')" = "true" ]; then
+                    tls_clean=$(echo "$tls_clean" | jq '. + {"utls": {"enabled": true, "fingerprint": "chrome"}}')
+                fi
                 token_json="${token_json},\"tls\":${tls_clean}"
             fi
             local trans=$(echo "$node" | jq -c '.transport // {}')
