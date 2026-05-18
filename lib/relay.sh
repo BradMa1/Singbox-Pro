@@ -18,6 +18,8 @@ fi
 export RELAY_CONFIG_DIR="${RELAY_CONFIG_DIR:-/etc/sing-box}"
 RELAY_META="${RELAY_META:-${RELAY_CONFIG_DIR}/relay.json}"
 PF_META="${PF_META:-${RELAY_CONFIG_DIR}/pf.json}"
+# 确保 METADATA_FILE 有默认值（singbox.sh 也可能设置）
+export METADATA_FILE="${METADATA_FILE:-${SINGBOX_DIR:-/usr/local/etc/sing-box}/metadata.json}"
 
 # ============================================================
 # 中转 Token 生成
@@ -166,6 +168,12 @@ _relay_gen_install_script() {
     local vless_port=$(echo "$vless_node" | jq -r '.listen_port')
     local vless_uuid=$(echo "$vless_node" | jq -r '.users[0].uuid')
     local vless_sni=$(echo "$vless_node" | jq -r '.tls.server_name // "addons.mozilla.org"')
+    local vless_tag=$(echo "$vless_node" | jq -r '.tag // ""')
+    local landing_pbk=""
+    if [ -n "$METADATA_FILE" ] && [ -f "$METADATA_FILE" ] && [ -n "$vless_tag" ]; then
+        landing_pbk=$(jq -r ".protocols.\"${vless_tag}\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+    fi
+    [ -z "$landing_pbk" ] && { _error "无法获取 VLESS Reality 公钥，请确认 metadata.json 存在且节点已保存"; read -p "按回车键返回..."; return; }
 
     local pub_ip="${CUSTOM_IP:-$(_get_public_ip)}"
     local relay_script="/tmp/relay-install.sh"
@@ -204,7 +212,7 @@ LISTEN_PORT="${USER_PORT:-$(shuf -i 20000-65000 -n 1 2>/dev/null || echo 20443)}
 RELAY_CONFIG_DIR="/etc/sing-box"
 mkdir -p "$RELAY_CONFIG_DIR"
 cat > "${RELAY_CONFIG_DIR}/config.json" <<EOF
-{"log":{"level":"info"},"inbounds":[{"type":"vless","tag":"vless-in","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
+{"log":{"level":"info"},"inbounds":[{"type":"vless","tag":"vless-in","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true,"public_key":"__LANDING_PBK__"},"utls":{"enabled":true,"fingerprint":"chrome"}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
 EOF
 
 cat > /etc/systemd/system/sing-box.service <<'SYSTEMD'
@@ -230,11 +238,12 @@ echo "vless://$UUID@$PUB_IP:$LISTEN_PORT?encryption=none&flow=xtls-rprx-vision&s
 RELAYEOF
 
     # 替换占位符
-    for p in __LANDING_IP__ __LANDING_PORT__ __LANDING_UUID__ __REALITY_SNI__; do
+    for p in __LANDING_IP__ __LANDING_PORT__ __LANDING_UUID__ __LANDING_PBK__ __REALITY_SNI__; do
         case "$p" in
             __LANDING_IP__) sed -i "s~__LANDING_IP__~${pub_ip}~g" "$relay_script" ;;
             __LANDING_PORT__) sed -i "s~__LANDING_PORT__~${vless_port}~g" "$relay_script" ;;
             __LANDING_UUID__) sed -i "s~__LANDING_UUID__~${vless_uuid}~g" "$relay_script" ;;
+            __LANDING_PBK__) sed -i "s~__LANDING_PBK__~${landing_pbk}~g" "$relay_script" ;;
             __REALITY_SNI__) sed -i "s~__REALITY_SNI__~${vless_sni}~g" "$relay_script" ;;
         esac
     done
