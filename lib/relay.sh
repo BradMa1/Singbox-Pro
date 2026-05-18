@@ -46,8 +46,22 @@ _relay_gen_token() {
             local tls=$(echo "$node" | jq -c '.tls // {}')
             if [ "$(echo "$tls" | jq '.enabled // false')" = "true" ]; then
                 local tls_clean=$(echo "$tls" | jq 'if .reality then .reality |= del(.handshake, .private_key) | .reality.short_id = (.reality.short_id[0] // "") else . end')
-                # VLESS Reality outbound 必须有 utls 字段指定浏览器指纹
+                # Reality outbound 必须有 public_key（从 metadata 读取）和 utls 指纹
                 if [ "$(echo "$tls" | jq '.reality.enabled // false')" = "true" ]; then
+                    # 从 metadata 提取 public_key（落地机生成节点时保存）
+                    local pbk=""
+                    if [ -n "$METADATA_FILE" ] && [ -f "$METADATA_FILE" ]; then
+                        pbk=$(jq -r ".protocols.\"${tag}\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                    fi
+                    # 如果 metadata 里没有，从 inbound 的 reality.short_id 所在层级尝试取公钥字段
+                    if [ -z "$pbk" ]; then
+                        pbk=$(echo "$tls" | jq -r '.reality.public_key // empty')
+                    fi
+                    # 在 reality 对象中注入 public_key
+                    if [ -n "$pbk" ]; then
+                        tls_clean=$(echo "$tls_clean" | jq --arg pbk "$pbk" '.reality.public_key = $pbk')
+                    fi
+                    # VLESS Reality outbound 必须有 utls 指纹
                     tls_clean=$(echo "$tls_clean" | jq '. + {"utls": {"enabled": true, "fingerprint": "chrome"}}')
                 fi
                 token_json="${token_json},\"tls\":${tls_clean}"
