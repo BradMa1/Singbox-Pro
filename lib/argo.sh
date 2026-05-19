@@ -161,13 +161,16 @@ _argo_get_status() {
     done
 
     if [ "$running" = true ]; then
-        # 只统计进程实际存活的 PID 文件数量
-        local count=0
+        # 清理已失效的残留 PID 文件（进程已死但文件残留）
         for pid_file in /tmp/singbox_argo_*.pid /tmp/singbox_argo_fixed_*.pid; do
             [ -f "$pid_file" ] || continue
             local pid=$(cat "$pid_file" 2>/dev/null)
-            [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && ((count++))
+            if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+                rm -f "$pid_file"
+            fi
         done
+        # 从 metadata 读取实际隧道数量（权威来源）
+        local count=$(_argo_count)
         echo "${GREEN}● 运行中${NC} (${count}隧道)"
     else
         echo "${YELLOW}○ 已安装 (未运行)${NC}"
