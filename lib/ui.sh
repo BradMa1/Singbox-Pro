@@ -22,15 +22,20 @@ SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.0}"
 
 _ui_banner() {
     clear
+    local w=48  # 内部宽度
+    local v="$SCRIPT_VERSION"
+    local l1="Singbox-Pro   v${v}"
+    local l2="Multi-Protocol Proxy"
+
+    # 动态计算居中 padding
+    local p1=$(( (w - ${#l1}) / 2 ))
+    local p2=$(( (w - ${#l2}) / 2 ))
+
     echo -e "${CYAN}"
-    echo '  ╔════════════════════════════════════════════════╗'
-    echo '  ║     ███████╗ ██████╗                                ║'
-    echo '  ║     ██╔════╝ ██╔══██╗      Singbox-Pro            ║'
-    echo '  ║     ███████╗ ██████╔╝      v'"${SCRIPT_VERSION}"'                      ║'
-    echo '  ║     ╚════██║ ██╔══██╗                              ║'
-    echo '  ║     ███████║ ██████╔╝      Multi-Protocol Proxy   ║'
-    echo '  ║     ╚══════╝ ╚═════╝                               ║'
-    echo '  ╚════════════════════════════════════════════════╝'
+    printf "  ╔%s╗\n" "$(printf '═%.0s' $(seq 1 $w))"
+    printf "  ║%*s%s%*s║\n" $p1 "" "$l1" $((w - p1 - ${#l1})) ""
+    printf "  ║%*s%s%*s║\n" $p2 "" "$l2" $((w - p2 - ${#l2})) ""
+    printf "  ╚%s╝\n" "$(printf '═%.0s' $(seq 1 $w))"
     echo -e "${NC}"
     echo ""
 }
@@ -49,19 +54,19 @@ _ui_status_panel() {
 
     # VPS 硬件信息
     local host=$(hostname 2>/dev/null || echo "unknown")
-    local cpu=$(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d':' -f2 | sed 's/  */ /g' | xargs | cut -c1-25 || echo "?")
-    local mem=$(free -h 2>/dev/null | awk '/^Mem:/{print $3"/"$2}' || echo "?")
+    local cpu=$(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d':' -f2 | sed 's/(R)//g; s/  */ /g' | xargs | cut -c1-22 || echo "?")
+    local mem_raw=$(free -h 2>/dev/null | awk '/^Mem:/{print $3"/"$2}' || echo "?")
+    local mem=$(echo "$mem_raw" | sed 's/i//g')  # Mi→M, Gi→G
     local disk=$(df -h / 2>/dev/null | awk 'NR==2{print $5}' || echo "?")
     local region=$(_get_region)
     local ip=$(_get_public_ip)
     local ipv6=$(_get_ipv6)
 
-    echo -e "  地区: ${YELLOW}${region}${NC}"
-    echo -e "  ${host} | ${os_info} | ${cpu} | 内存 ${mem} | 磁盘 ${disk}"
-    echo -e "  IPv4: ${GREEN}${ip}${NC}    IPv6: ${GREEN}${ipv6}${NC}"
+    echo -e "  地区: ${YELLOW}${region}${NC} | ${host}"
+    echo -e "  系统: ${os_info} | CPU: ${cpu} | 内存: ${mem} | 磁盘: ${disk}"
+    echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
     echo ""
-    echo -e "  ${CYAN}Sing-box:${NC} v${sb_ver}  ${sb_status}  节点: ${node_count}"
-    echo -e "  ${CYAN}Argo:${NC} ${argo_status}  ${CYAN}WARP:${NC} ${warp_status}"
+    echo -e "  ${CYAN}Sing-box${NC} v${sb_ver} ${sb_status} | ${CYAN}Argo${NC} ${argo_status} | ${CYAN}WARP${NC} ${warp_status} | 节点: ${node_count}"
     echo ""
 }
 
@@ -74,6 +79,7 @@ _ui_main_menu() {
         _ui_banner
         _ui_status_panel
 
+        echo -e "  ─────────────────────────────────────────────────"
         echo -e "  ${CYAN}【节点管理】${NC}"
         echo -e "    ${GREEN}[1]${NC} 添加节点          ${GREEN}[2]${NC} Argo 隧道节点"
         echo -e "    ${GREEN}[3]${NC} 查看节点链接      ${GREEN}[4]${NC} 删除节点"
