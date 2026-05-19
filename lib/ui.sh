@@ -61,9 +61,10 @@ _ui_status_panel() {
     local region=$(_get_region)
     local ip=$(_get_public_ip)
     local ipv6=$(_get_ipv6)
+    local bbr=$(_get_bbr)
 
     echo -e "  地区: ${YELLOW}${region}${NC} | ${host}"
-    echo -e "  系统: ${os_info} | CPU: ${cpu} | 内存: ${mem} | 磁盘: ${disk}"
+    echo -e "  系统: ${os_info} | BBR: ${bbr} | CPU: ${cpu} | 内存: ${mem} | 磁盘: ${disk}"
     echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
     echo ""
     echo -e "  ${CYAN}Sing-box${NC} v${sb_ver} ${sb_status} | ${CYAN}Argo${NC} ${argo_status} | ${CYAN}WARP${NC} ${warp_status} | 节点: ${node_count}"

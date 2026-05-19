@@ -127,6 +127,17 @@ _get_ipv6() {
     echo "$ipv6_cache"
 }
 
+# --- BBR 状态 ---
+_get_bbr() {
+    local cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
+    [ -z "$cc" ] && { echo "${RED}?${NC}"; return; }
+    if echo "$cc" | grep -qi "bbr"; then
+        echo "${GREEN}${cc}${NC}"
+    else
+        echo "${YELLOW}${cc}${NC}"
+    fi
+}
+
 # --- 国家代码 → 中文名称 ---
 _country_cn() {
     case "$1" in
