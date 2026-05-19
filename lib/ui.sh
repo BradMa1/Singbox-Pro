@@ -93,17 +93,18 @@ _ui_main_menu() {
 
         echo -e "  ${CYAN}【进阶功能】${NC}"
         echo -e "    ${GREEN}[8]${NC} 中转管理          ${GREEN}[9]${NC} WARP 管理"
+        echo -e "    ${GREEN}[10]${NC} IPv6 优化         ${GREEN}[11]${NC} 流媒体 DNS"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
-        echo -e "    ${GREEN}[10]${NC} 安装/更新核心    ${RED}[11]${NC} 卸载脚本"
+        echo -e "    ${GREEN}[12]${NC} 安装/更新核心    ${RED}[13]${NC} 卸载脚本"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-11]: " choice
+        read -p "  请输入选项 [0-13]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -115,8 +116,10 @@ _ui_main_menu() {
             7) _ui_stop_service ;;
             8) _ui_relay_menu ;;
             9) _ui_warp_menu ;;
-            10) _ui_update_core ;;
-            11) _ui_uninstall ;;
+            10) _ui_ipv6_menu ;;
+            11) _ui_streaming_dns_menu ;;
+            12) _ui_update_core ;;
+            13) _ui_uninstall ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1006,6 +1009,75 @@ _ui_warp_remove_domain() {
 _ui_relay_menu() {
     # 委托给 relay.sh 的中转菜单
     _relay_main_menu
+}
+
+# ============================================================
+# IPv6 优化菜单
+# ============================================================
+
+_ui_ipv6_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=== IPv6 优化 ===${NC}"
+        echo ""
+        echo -e "  当前状态: $(_dns_ipv6_status)"
+        echo ""
+        echo -e "  让 sing-box 出站连接优先使用 IPv6，有助于解锁流媒体。"
+        echo -e "  前提: VPS 必须有公网 IPv6 地址。"
+        echo ""
+        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先"
+        echo -e "    ${GREEN}[2]${NC} 恢复 IPv4 优先（默认）"
+        echo ""
+        echo -e "    ${YELLOW}[0]${NC} 返回"
+        echo ""
+        read -p "  请输入选项 [0-2]: " choice
+
+        case $choice in
+            1) _dns_ipv6_enable; read -p "按回车继续..."; ;;
+            2) _dns_ipv6_disable; read -p "按回车继续..."; ;;
+            0) return ;;
+            *) _warn "无效选项" ; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================================================
+# 流媒体 DNS 菜单
+# ============================================================
+
+_ui_streaming_dns_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=== 流媒体 DNS 解锁 ===${NC}"
+        echo ""
+        echo -e "  当前 DNS: $(_streaming_dns_status)"
+        echo ""
+        echo -e "  设置后，Netflix / Disney+ / HBO 等流媒体域名"
+        echo -e "  将走指定 DNS 解析，绕开机房 IP 封杀。"
+        echo -e "  不影响其他域名的正常解析。"
+        echo ""
+        echo -e "    ${GREEN}[1]${NC} 设置流媒体 DNS"
+        echo -e "    ${GREEN}[2]${NC} 移除流媒体 DNS"
+        echo ""
+        echo -e "    ${YELLOW}[0]${NC} 返回"
+        echo ""
+        read -p "  请输入选项 [0-2]: " choice
+
+        case $choice in
+            1)
+                echo ""
+                read -p "  请输入流媒体 DNS 地址（如 151.243.229.229）: " dns_addr
+                [ -n "$dns_addr" ] && _streaming_dns_set "$dns_addr"
+                read -p "按回车继续..."
+                ;;
+            2)
+                _streaming_dns_remove
+                read -p "按回车继续..."
+                ;;
+            0) return ;;
+            *) _warn "无效选项" ; sleep 1 ;;
+        esac
+    done
 }
 
 # ============================================================

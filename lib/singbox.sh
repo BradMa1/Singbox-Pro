@@ -314,6 +314,116 @@ _sb_backup_config() {
 }
 
 # ============================================================
+# DNS 管理 — IPv6 优先 / 流媒体 DNS 解锁
+# ============================================================
+
+IPV6_DNS_STATE="${SINGBOX_DIR}/.ipv6_dns_enabled"
+STREAMING_DNS_STATE="${SINGBOX_DIR}/.streaming_dns"
+
+# --- IPv6 DNS 状态 ---
+_dns_ipv6_status() {
+    if [ -f "$IPV6_DNS_STATE" ]; then
+        echo "${GREEN}● IPv6 优先${NC}"
+    else
+        echo "${YELLOW}○ IPv4 优先${NC}（默认）"
+    fi
+}
+
+# --- 启用 IPv6 DNS ---
+_dns_ipv6_enable() {
+    local ipv6=$(timeout 3 curl -s6 ifconfig.me 2>/dev/null)
+    [ -z "$ipv6" ] && { _error "本机无 IPv6 地址，无法启用"; return 1; }
+
+    _sb_backup_config
+    _atomic_modify_json "$CONFIG_FILE" '
+        .dns.strategy = "prefer_ipv6" |
+        (.dns.servers[] | select(.tag == "dns-local") | .address) = "2400:3200::1" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .address) = "2001:4860:4860::8888"
+    '
+    touch "$IPV6_DNS_STATE"
+    _sb_restart_and_verify
+    _success "IPv6 DNS 优先已启用 — 出站连接将优先使用 IPv6"
+}
+
+# --- 禁用 IPv6 DNS ---
+_dns_ipv6_disable() {
+    _sb_backup_config
+    _atomic_modify_json "$CONFIG_FILE" '
+        .dns.strategy = "prefer_ipv4" |
+        (.dns.servers[] | select(.tag == "dns-local") | .address) = "223.5.5.5" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .address) = "8.8.8.8"
+    '
+    rm -f "$IPV6_DNS_STATE"
+    _sb_restart_and_verify
+    _success "已恢复 IPv4 DNS 优先"
+}
+
+# --- 流媒体 DNS 状态 ---
+_streaming_dns_status() {
+    if [ -f "$STREAMING_DNS_STATE" ]; then
+        local addr=$(cat "$STREAMING_DNS_STATE")
+        echo "${GREEN}● ${addr}${NC}"
+    else
+        echo "${YELLOW}○ 未设置${NC}"
+    fi
+}
+
+# --- 设置流媒体 DNS ---
+_streaming_dns_set() {
+    local addr="$1"
+    [ -z "$addr" ] && { _error "请提供 DNS 地址"; return 1; }
+    echo "$addr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
+        _warn "地址格式不标准: $addr，继续..."
+    }
+
+    _sb_backup_config
+
+    # 先清理旧配置（避免重复）
+    if jq -e '.dns.servers[] | select(.tag == "dns-streaming")' "$CONFIG_FILE" >/dev/null 2>&1; then
+        _atomic_modify_json "$CONFIG_FILE" 'del(.dns.servers[] | select(.tag == "dns-streaming"))'
+    fi
+    if jq -e '.dns.rules[] | select(.server == "dns-streaming")' "$CONFIG_FILE" >/dev/null 2>&1; then
+        _atomic_modify_json "$CONFIG_FILE" 'del(.dns.rules[] | select(.server == "dns-streaming"))'
+    fi
+
+    # 添加新的流媒体 DNS
+    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","address":"'"$addr"'","detour":"proxy"}]'
+    _atomic_modify_json "$CONFIG_FILE" '.dns.rules += [{
+        "domain_suffix": [
+            "netflix.com", "nflxvideo.net", "nflxext.com",
+            "disneyplus.com", "disney-plus.net",
+            "hbo.com", "hbomax.com", "max.com",
+            "hulu.com", "hulustream.com",
+            "amazon.com", "primevideo.com",
+            "youtube.com", "googlevideo.com",
+            "spotify.com",
+            "tiktok.com", "tiktokcdn.com",
+            "dazn.com", "paramountplus.com",
+            "peacocktv.com", "appletv.com"
+        ],
+        "server": "dns-streaming"
+    }]'
+    echo "$addr" > "$STREAMING_DNS_STATE"
+    _sb_restart_and_verify
+    _success "流媒体 DNS 已设置: ${addr}"
+}
+
+# --- 移除流媒体 DNS ---
+_streaming_dns_remove() {
+    if ! jq -e '.dns.servers[] | select(.tag == "dns-streaming")' "$CONFIG_FILE" >/dev/null 2>&1; then
+        [ -f "$STREAMING_DNS_STATE" ] && rm -f "$STREAMING_DNS_STATE"
+        return 0
+    fi
+
+    _sb_backup_config
+    _atomic_modify_json "$CONFIG_FILE" 'del(.dns.servers[] | select(.tag == "dns-streaming"))'
+    _atomic_modify_json "$CONFIG_FILE" 'del(.dns.rules[] | select(.server == "dns-streaming"))'
+    rm -f "$STREAMING_DNS_STATE"
+    _sb_restart_and_verify
+    _success "流媒体 DNS 已移除"
+}
+
+# ============================================================
 # 独立运行
 # ============================================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

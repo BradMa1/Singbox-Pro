@@ -44,9 +44,10 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
   【进阶功能】
     [8] 中转管理          [9] WARP 管理
+    [10] IPv6 优化         [11] 流媒体 DNS
 
   【系统维护】
-    [10] 安装/更新核心    [11] 卸载脚本
+    [12] 安装/更新核心    [13] 卸载脚本
 
   ─────────────────────────────────────────────────
     [0] 退出脚本
@@ -134,6 +135,41 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 - 路由规则：通过 `warp-domain-rule` outbound 将匹配域名导向 WARP SOCKS5
 - DNS 规则：通过 `dns-warp` 服务器走 WARP 加密通道解析，防 DNS 泄漏
+
+---
+
+## IPv6 优化（菜单 10）
+
+让 sing-box 出站连接优先使用 IPv6，有助于解锁流媒体。
+
+| 选项 | 说明 |
+|:-----|:-----|
+| [1] 启用 IPv6 优先 | DNS 策略切换为 `prefer_ipv6`，DNS 服务器改用 IPv6 地址 |
+| [2] 恢复 IPv4 优先 | 恢复默认配置 |
+
+启用后 DNS 变更：
+
+| DNS 角色 | 默认 (IPv4) | IPv6 模式 |
+|:---------|:-----------|:----------|
+| 国内解析 | `223.5.5.5`（阿里） | `2400:3200::1`（阿里 IPv6） |
+| 国外解析 | `8.8.8.8`（Google） | `2001:4860:4860::8888`（Google IPv6） |
+
+前提：VPS 必须有公网 IPv6 地址。
+
+---
+
+## 流媒体 DNS 解锁（菜单 11）
+
+设置专用 DNS 让 Netflix、Disney+ 等流媒体域名走指定解析，绕开机房 IP 封杀。
+
+| 选项 | 说明 |
+|:-----|:-----|
+| [1] 设置流媒体 DNS | 输入 DNS 地址（如 `151.243.229.229`） |
+| [2] 移除流媒体 DNS | 恢复默认 DNS 解析 |
+
+**覆盖域名**: Netflix, Disney+, HBO Max, Hulu, Prime Video, YouTube, Spotify, TikTok, DAZN, Paramount+, Peacock, Apple TV+
+
+原理：只对流媒体域名使用该 DNS，其他域名不受影响。
 
 ---
 
