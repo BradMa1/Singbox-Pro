@@ -17,6 +17,16 @@
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
 ```
+如遇Alpine系统无法安装，可先执行以下命令：
+```# 更新仓库索引
+apk update
+
+# 安装 bash
+apk add bash
+
+# 安装完成后检查版本
+bash --version
+```
 
 ## 管理面板
 
