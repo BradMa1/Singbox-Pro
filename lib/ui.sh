@@ -93,7 +93,7 @@ _ui_main_menu() {
 
         echo -e "  ${CYAN}【进阶功能】${NC}"
         echo -e "    ${GREEN}[8]${NC} 中转管理          ${GREEN}[9]${NC} WARP 管理"
-        echo -e "    ${GREEN}[10]${NC} IPv6 优化         ${GREEN}[11]${NC} 流媒体 DNS"
+        echo -e "    ${GREEN}[10]${NC} IPv6 优化        ${GREEN}[11]${NC} 流媒体 DNS"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
