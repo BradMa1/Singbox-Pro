@@ -127,6 +127,8 @@ _step_singbox() {
 
     local arch=$(_get_arch)
     local pkg="sing-box-${SB_VERSION}-linux-${arch}"
+    # Alpine 使用 musl libc，需下载 musl 专用版本
+    [ "$OS" == "alpine" ] && pkg="${pkg}-musl"
     local url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/${pkg}.tar.gz"
 
     _info "正在下载 sing-box v${SB_VERSION} (${arch})..."

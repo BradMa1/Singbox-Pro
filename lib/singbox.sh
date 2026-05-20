@@ -38,6 +38,8 @@ _sb_install_core() {
     local version="${1:-${SB_VERSION}}"
     local tmp_dir=$(mktemp -d)
     local pkg_name="sing-box-${version}-linux-${arch}"
+    # Alpine 使用 musl libc，需下载 musl 专用版本
+    [ -f /etc/alpine-release ] && pkg_name="${pkg_name}-musl"
     local base_url="https://github.com/SagerNet/sing-box/releases/download/v${version}"
 
     _info "正在下载 sing-box v${version} (${arch})..."
@@ -243,7 +245,11 @@ _sb_restart_and_verify() {
         fi
     fi
 
-    _error "sing-box 启动失败，请检查日志: journalctl -u sing-box -n 30"
+    if [ "$INIT_SYSTEM" == "openrc" ]; then
+        _error "sing-box 启动失败，请检查日志: cat /var/log/sing-box.log"
+    else
+        _error "sing-box 启动失败，请检查日志: journalctl -u sing-box -n 30"
+    fi
     return 1
 }
 
