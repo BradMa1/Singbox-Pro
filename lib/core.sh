@@ -88,13 +88,23 @@ if ! declare -f _get_os_info >/dev/null 2>&1; then
 fi
 
 # --- 公网 IP (带全局缓存) ---
+# NAT VPS 环境下 API 返回的出口 IP 可能不等于面板分配的端口映射 IP
+# 设置 SERVER_IP_OVERRIDE 强制使用指定 IP，例如:
+#   export SERVER_IP_OVERRIDE=108.62.161.75 && bash sb.sh
 server_ip=""
 if ! declare -f _get_public_ip >/dev/null 2>&1; then
     _get_public_ip() {
         [ -n "$server_ip" ] && [ "$server_ip" != "null" ] && { echo "$server_ip"; return; }
         local ip
 
-        # 优先从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
+        # 最高优先级：手动覆盖 (NAT VPS 场景)
+        if [ -n "${SERVER_IP_OVERRIDE:-}" ]; then
+            server_ip="$SERVER_IP_OVERRIDE"
+            echo "$server_ip"
+            return
+        fi
+
+        # 从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
         ip=$(ip -4 addr show scope global 2>/dev/null | grep -v 'docker\|br-\|veth\|wgcf\|lo' | grep -oP 'inet \K[\d.]+' | head -1)
         if [ -n "$ip" ] && ! echo "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.)'; then
             server_ip="$ip"
