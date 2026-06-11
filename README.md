@@ -31,7 +31,7 @@ bash --version
 
 ## 管理面板
 
-安装后输入 `sb` 进入管理面板：
+安装后直接输入 `sb` 进入交互式管理面板，所有操作菜单驱动：
 
 ```
   ╔════════════════════════════════════════════════╗
@@ -63,6 +63,8 @@ bash --version
   ─────────────────────────────────────────────────
     [0] 退出脚本
 ```
+
+除了交互面板，还支持命令行操作（见下方 [CLI 命令](#cli-命令)），方便脚本化管理和远程诊断。
 
 ## CLI 命令
 
@@ -249,8 +251,9 @@ bash --version
 
 ## 文件结构
 
+### 服务端（安装后）
+
 ```
-安装后:
 /etc/sing-box/
 ├── config.json          # 主配置
 ├── metadata.json        # 节点元数据（含 Reality public_key 等）
@@ -260,17 +263,44 @@ bash --version
 ├── relay.json           # 中转路由元数据
 ├── argo_metadata.json   # Argo 隧道元数据
 ├── warp-meta.json       # WARP 域名分流元数据
-└── .server_info         # VPS 状态面板缓存（60分钟有效）
+├── .ipv6_dns_enabled    # IPv6 DNS 状态标记
+├── .streaming_dns       # 流媒体 DNS 地址缓存
+├── .server_info         # VPS 状态面板缓存（60 分钟有效）
+└── .backup.*/           # sb upgrade 自动备份目录
+```
 
-运行时:
-/tmp/singbox_argo_*.pid   # Argo 隧道进程 PID
-/tmp/singbox_argo_*.log   # Argo 隧道日志
+### 运行时
 
+```
+/var/log/sing-box.log             # sing-box 运行日志
+/tmp/singbox_argo_*.pid           # Argo 隧道进程 PID
+/tmp/singbox_argo_*.log           # Argo 隧道日志
+```
+
+### 定时任务 & 系统配置
+
+```
 crontab:
 * * * * * /usr/local/bin/sb keepalive   # Argo 看门狗
 
-系统配置:
-/etc/logrotate.d/sing-box   # 日志轮转（保留7天，自动压缩）
+/etc/logrotate.d/sing-box               # 日志轮转（保留 7 天，自动压缩）
+```
+
+### 项目源文件
+
+```
+singbox-pro/
+├── sb.sh              # 主入口（CLI 命令 + 面板启动）
+├── install.sh         # 一键安装脚本
+├── README.md          # 本文件
+├── lib/
+│   ├── core.sh        # 核心工具（颜色/网络/JSON/版本号 SSOT）
+│   ├── singbox.sh     # sing-box 安装/配置/健康检查/升级
+│   ├── protocols.sh   # 5 种协议生成/URI/删除
+│   ├── argo.sh        # Argo 隧道管理
+│   ├── warp.sh        # WARP 安装 & 域名分流
+│   ├── relay.sh       # 中转 & 端口转发
+│   └── ui.sh          # 交互面板界面
 ```
 
 ## 系统要求
@@ -293,3 +323,24 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - VMess WebSocket 使用自签证书加密，客户端需跳过证书验证
 - AnyTLS / Hysteria2 / TUIC 使用自签证书，URI 已含 `insecure=1`
 - WARP 域名分流通过 DNS 规则确保 AI 域名走 WARP 通道解析
+- `sb upgrade` 自动备份当前版本到 `.backup.时间戳/`，升级失败自动回滚
+- 安装脚本自动配置 logrotate 日志轮转（Logrotate 未安装时跳过）
+
+---
+
+## 更新日志
+
+### v2.0.1 (2026-06-11)
+
+**修复**
+- 修复「修改节点」功能因缺少用户输入导致永远返回「未修改」的 Bug
+- 修复中转 Token 保存到文件时只保留最后一个节点的 Token
+- 修复删除节点时端口号从 tag 名称猜测（`grep -oE`），改为从 config.json 提取真实端口
+
+**新增功能**
+- `sb health` — 深度健康检查（6 大项：依赖/进程/端口/DNS/系统资源/扩展服务）
+- `sb upgrade` — 一键升级所有管理脚本到最新版（自动备份 + 回滚）
+- 安装脚本自动配置 logrotate 日志轮转（保留 7 天，自动压缩）
+
+**重构**
+- `SB_VERSION` 统一到 `core.sh`（SSOT 原则），移除 `sb.sh` / `singbox.sh` 中的重复定义
