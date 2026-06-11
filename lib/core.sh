@@ -354,6 +354,9 @@ if ! declare -f _download >/dev/null 2>&1; then
     }
 fi
 
+# --- Sing-box 版本号 (SSOT - 唯一来源) ---
+export SB_VERSION="1.13.12"
+
 # --- 核心路径定义 ---
 export SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
 export SINGBOX_BIN="${SINGBOX_BIN:-/usr/local/bin/sing-box}"

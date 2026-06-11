@@ -10,7 +10,7 @@ SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
 SINGBOX_BIN="${SINGBOX_BIN:-/usr/local/bin/sing-box}"
 CONFIG_FILE="${CONFIG_FILE:-${SINGBOX_DIR}/config.json}"
 METADATA_FILE="${METADATA_FILE:-${SINGBOX_DIR}/metadata.json}"
-SB_VERSION="${SB_VERSION:-1.13.12}"
+# SB_VERSION 从 core.sh 获取（SSOT），独立运行也可通过下方 source 获得
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -35,7 +35,7 @@ _get_arch() {
 # --- 安装/更新 sing-box 核心 ---
 _sb_install_core() {
     local arch=$(_get_arch)
-    local version="${1:-${SB_VERSION}}"
+    local version="${1:-${SB_VERSION:-1.13.12}}"
     local tmp_dir=$(mktemp -d)
     local pkg_name="sing-box-${version}-linux-${arch}"
     # Alpine 使用 musl libc，需下载 musl 专用版本
@@ -427,6 +427,279 @@ _streaming_dns_remove() {
     rm -f "$STREAMING_DNS_STATE"
     _sb_restart_and_verify
     _success "流媒体 DNS 已移除"
+}
+
+# ============================================================
+# 脚本升级
+# ============================================================
+
+_sb_upgrade_scripts() {
+    echo -e "${CYAN}=== 升级管理脚本 ===${NC}"
+    echo ""
+
+    local repo="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
+    local mirror="https://ghproxy.net/${repo}"
+    local lib_dir="$(dirname "$(readlink -f "$0")")/lib"
+
+    # 先检测最新版本号
+    _info "正在检查最新版本..."
+    local remote_ver
+    remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/install.sh" 2>/dev/null | grep -oP 'SCRIPT_VERSION="\K[^"]+' || echo "")
+    if [ -z "$remote_ver" ]; then
+        _warn "主源检查失败，尝试镜像..."
+        remote_ver=$(curl -fsSL --connect-timeout 10 "${mirror}" 2>/dev/null | grep -oP 'SCRIPT_VERSION="\K[^"]+' || echo "")
+    fi
+
+    [ -z "$remote_ver" ] && { _error "无法检测最新版本，请检查网络"; read -p "按回车键返回..."; return 1; }
+
+    echo -e "  当前版本: ${SCRIPT_VERSION:-2.0.0}"
+    echo -e "  最新版本: ${remote_ver}"
+    echo ""
+
+    # 备份
+    local backup_dir="${lib_dir}/../.backup.$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_dir"
+
+    local files_to_upgrade=(
+        "sb.sh|${repo}/sb.sh"
+        "lib/core.sh|${repo}/lib/core.sh"
+        "lib/singbox.sh|${repo}/lib/singbox.sh"
+        "lib/protocols.sh|${repo}/lib/protocols.sh"
+        "lib/argo.sh|${repo}/lib/argo.sh"
+        "lib/warp.sh|${repo}/lib/warp.sh"
+        "lib/relay.sh|${repo}/lib/relay.sh"
+        "lib/ui.sh|${repo}/lib/ui.sh"
+    )
+
+    local success=0 fail=0
+    for entry in "${files_to_upgrade[@]}"; do
+        local fname="${entry%%|*}"
+        local furl="${entry##*|}"
+        local target
+
+        if [ "$fname" = "sb.sh" ]; then
+            target="$(dirname "$(readlink -f "$0")")/../sb.sh"
+        else
+            target="${lib_dir}/${fname#lib/}"
+        fi
+        target="$(readlink -f "$target")"
+
+        # 备份
+        [ -f "$target" ] && cp "$target" "${backup_dir}/"
+
+        # 下载
+        if curl -fsSL --connect-timeout 15 --max-time 60 "$furl" -o "$target" 2>/dev/null; then
+            [ -x "$target" ] || chmod +x "$target"
+            echo -e "  ${GREEN}✓${NC} ${fname}"
+            ((success++))
+        else
+            # 镜像回退
+            local fmirror="${furl/${repo}/${mirror}}"
+            if curl -fsSL --connect-timeout 15 --max-time 60 "$fmirror" -o "$target" 2>/dev/null; then
+                [ -x "$target" ] || chmod +x "$target"
+                echo -e "  ${GREEN}✓${NC} ${fname} (镜像)"
+                ((success++))
+            else
+                # 恢复备份
+                [ -f "${backup_dir}/${fname##*/}" ] && cp "${backup_dir}/${fname##*/}" "$target"
+                echo -e "  ${RED}✗${NC} ${fname}"
+                ((fail++))
+            fi
+        fi
+    done
+
+    echo ""
+    if [ "$fail" -eq 0 ]; then
+        _success "所有 ${success} 个文件升级成功！"
+        _info "备份文件: ${backup_dir}"
+        if [ "$success" -gt 0 ] && [ "$fail" -eq 0 ]; then
+            echo -e "  ${YELLOW}建议执行 sb restart 重启服务使变更生效${NC}"
+        fi
+    else
+        _warn "${success} 成功，${fail} 失败"
+        _info "备份文件: ${backup_dir}"
+    fi
+
+    read -p "按回车键返回..."
+}
+
+# ============================================================
+# 深度健康检查
+# ============================================================
+
+_sb_health_check() {
+    local exit_code=0
+
+    _include_status() {
+        local label="$1" status="$2"
+        if [ "$status" = "ok" ]; then
+            echo -e "  ${GREEN}✓${NC} ${label}"
+        elif [ "$status" = "warn" ]; then
+            echo -e "  ${YELLOW}○${NC} ${label}"
+            exit_code=1
+        else
+            echo -e "  ${RED}✗${NC} ${label}"
+            exit_code=1
+        fi
+    }
+
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo -e "${CYAN}       Singbox-Pro 深度健康检查${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo ""
+
+    # 1. 核心依赖
+    echo -e "${BLUE}── 核心依赖 ──${NC}"
+    for cmd in jq curl openssl; do
+        if command -v "$cmd" &>/dev/null; then
+            local ver=$("$cmd" --version 2>/dev/null | head -1)
+            _include_status "$cmd ($ver)" "ok"
+        else
+            _include_status "$cmd (未安装)" "fail"
+        fi
+    done
+    echo ""
+
+    # 2. sing-box 二进制
+    echo -e "${BLUE}── sing-box ──${NC}"
+    if [ -f "$SINGBOX_BIN" ]; then
+        local sv=$("$SINGBOX_BIN" version 2>/dev/null | head -1 | awk '{print $NF}')
+        _include_status "二进制文件 ($SINGBOX_BIN v$sv)" "ok"
+
+        # 检查配置有效性
+        if "$SINGBOX_BIN" check -c "$CONFIG_FILE" &>/dev/null; then
+            _include_status "配置文件 (config.json 语法正确)" "ok"
+        else
+            _include_status "配置文件 (config.json 语法错误)" "fail"
+        fi
+
+        # 进程状态
+        if _sb_is_installed; then
+            local status_text=$(_sb_get_status)
+            if echo "$status_text" | grep -q "运行中"; then
+                _include_status "服务状态 (运行中)" "ok"
+            else
+                _include_status "服务状态 (已停止)" "fail"
+            fi
+        fi
+    else
+        _include_status "二进制文件 (未安装)" "fail"
+    fi
+    echo ""
+
+    # 3. 端口监听
+    echo -e "${BLUE}── 端口监听 ──${NC}"
+    if [ -f "$CONFIG_FILE" ]; then
+        local inbound_count=$(jq '.inbounds | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
+        if [ "$inbound_count" -eq 0 ]; then
+            _include_status "入站节点 (0 个，无节点在监听)" "warn"
+        else
+            echo "  共 ${inbound_count} 个节点:"
+            jq -c '.inbounds[]' "$CONFIG_FILE" 2>/dev/null | while IFS= read -r node; do
+                local ntype=$(echo "$node" | jq -r '.type')
+                local nport=$(echo "$node" | jq -r '.listen_port')
+                if _verify_port_listen "$nport" "${ntype}"; then
+                    echo -e "    ${GREEN}✓${NC} ${ntype}:${nport} (监听正常)"
+                else
+                    echo -e "    ${RED}✗${NC} ${ntype}:${nport} (端口未监听)"
+                fi
+            done 2>/dev/null || true
+        fi
+    fi
+    echo ""
+
+    # 4. DNS 解析
+    echo -e "${BLUE}── DNS 解析 ──${NC}"
+    if command -v nslookup &>/dev/null || command -v dig &>/dev/null || command -v host &>/dev/null; then
+        local dns_ok="ok"
+        for domain in "google.com" "baidu.com"; do
+            local result
+            result=$(timeout 3 nslookup "$domain" 2>/dev/null | grep -c "Address" || \
+                     timeout 3 dig +short "$domain" 2>/dev/null | head -1 || \
+                     timeout 3 host "$domain" 2>/dev/null | grep -c "has address" || echo "0")
+            if [ "$result" -gt 0 ] 2>/dev/null || [ -n "$result" ]; then
+                echo -e "    ${GREEN}✓${NC} ${domain} (解析正常)"
+            else
+                echo -e "    ${YELLOW}○${NC} ${domain} (解析超时)"
+                dns_ok="warn"
+            fi
+        done
+        if [ "$dns_ok" = "ok" ]; then
+            _include_status "DNS 整体状况" "ok"
+        else
+            _include_status "DNS 整体状况 (部分异常)" "warn"
+        fi
+    else
+        _include_status "DNS 工具 (未安装 nslookup/dig/host)" "warn"
+    fi
+    echo ""
+
+    # 5. 系统资源
+    echo -e "${BLUE}── 系统资源 ──${NC}"
+    local mem_total mem_used
+    if [ -f /proc/meminfo ]; then
+        mem_total=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+        mem_used=$(awk '/MemAvailable/{print $2}' /proc/meminfo)
+        mem_used=$(( (mem_total - mem_used) / 1024 ))
+        mem_total=$(( mem_total / 1024 ))
+        echo -e "    内存: ${mem_used}M / ${mem_total}M"
+        if [ "$mem_used" -gt "$((mem_total * 9 / 10))" ]; then
+            _include_status "内存使用 (${mem_used}M / ${mem_total}M, 超过 90%)" "warn"
+        else
+            _include_status "内存使用 (${mem_used}M / ${mem_total}M)" "ok"
+        fi
+    fi
+
+    local disk_usage
+    disk_usage=$(df / 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%' || echo 0)
+    echo -e "    磁盘: ${disk_usage}%"
+    if [ "$disk_usage" -gt 90 ]; then
+        _include_status "磁盘使用 (${disk_usage}%, 超过 90%)" "warn"
+    elif [ "$disk_usage" -gt 80 ]; then
+        _include_status "磁盘使用 (${disk_usage}%)" "ok"
+    else
+        _include_status "磁盘使用率 (${disk_usage}%)" "ok"
+    fi
+
+    local uptime_secs=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+    local uptime_days=$((uptime_secs / 86400))
+    echo -e "    运行时间: ${uptime_days} 天"
+    echo ""
+
+    # 6. 扩展服务
+    echo -e "${BLUE}── 扩展服务 ──${NC}"
+
+    # Argo
+    local argo_status=$(_argo_get_status 2>/dev/null || echo "未知")
+    if echo "$argo_status" | grep -q "运行中"; then
+        _include_status "Argo 隧道 ($argo_status)" "ok"
+    elif echo "$argo_status" | grep -q "未安装"; then
+        _include_status "Argo (未安装)" "warn"
+    else
+        _include_status "Argo ($argo_status)" "warn"
+    fi
+
+    # WARP
+    local warp_status=$(_warp_get_status 2>/dev/null || echo "未知")
+    if echo "$warp_status" | grep -q "运行中"; then
+        _include_status "WARP ($warp_status)" "ok"
+    elif echo "$warp_status" | grep -q "未安装"; then
+        _include_status "WARP (未安装)" "ok"
+    else
+        _include_status "WARP ($warp_status)" "warn"
+    fi
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    if [ "$exit_code" -eq 0 ]; then
+        echo -e "  ${GREEN}✓ 所有检查通过，系统运行正常${NC}"
+    else
+        echo -e "  ${YELLOW}○ 部分检查未通过，请参考以上标记处理${NC}"
+    fi
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo ""
+
+    return $exit_code
 }
 
 # ============================================================

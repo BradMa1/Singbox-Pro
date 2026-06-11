@@ -281,6 +281,22 @@ SVCALPINE
     else
         _warn "无法识别 init 系统，请手动设置服务"
     fi
+
+    # 设置日志轮转（如果系统支持 logrotate）
+    if command -v logrotate &>/dev/null && [ ! -f /etc/logrotate.d/sing-box ]; then
+        cat > /etc/logrotate.d/sing-box << 'LOGROTEOF'
+/var/log/sing-box.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+LOGROTEOF
+        _ok "日志轮转已配置 (保留 7 天，自动压缩)"
+    fi
 }
 
 # ============================================================

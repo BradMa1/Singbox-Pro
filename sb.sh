@@ -14,7 +14,7 @@ set -euo pipefail
 
 export SCRIPT_VERSION="2.0.0"
 export SCRIPT_NAME="Singbox-Pro"
-export SB_VERSION="1.13.12"
+# SB_VERSION 定义在 core.sh（SSOT），加载模块后自动获取
 
 # --- 路径定义 ---
 SELF_PATH="$(readlink -f "$0")"
@@ -125,6 +125,18 @@ main() {
             _sb_backup_config
             ;;
 
+        upgrade)
+            _check_deps
+            _load_modules
+            _sb_upgrade_scripts
+            ;;
+
+        health)
+            _check_deps
+            _load_modules
+            _sb_health_check
+            ;;
+
         install)
             # 在 VPS 上首次安装时调用
             echo "请使用 install.sh 进行首次部署:"
@@ -139,9 +151,11 @@ main() {
             echo "命令:"
             echo "  (无参数)    启动管理面板"
             echo "  status      查看运行状态"
+            echo "  health      深度健康检查"
             echo "  restart     重启 sing-box 服务"
             echo "  stop        停止 sing-box 服务"
             echo "  log         查看实时日志"
+            echo "  upgrade     升级管理脚本到最新版"
             echo "  backup      备份配置"
             echo "  help        显示此帮助"
             ;;

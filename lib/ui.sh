@@ -1162,11 +1162,13 @@ _ui_delete_node() {
     echo ""
 
     local tags=()
+    local ports=()
     while IFS= read -r line; do
         local tag=$(echo "$line" | jq -r .tag)
         local type=$(echo "$line" | jq -r .type)
         local port=$(echo "$line" | jq -r .listen_port)
         tags+=("$tag")
+        ports+=("$port")
         local idx=${#tags[@]}
         echo -e "  ${GREEN}[${idx}]${NC} ${type}:${port}  (${tag})"
     done < <(_proto_list_inbounds 2>/dev/null)
@@ -1211,7 +1213,7 @@ _ui_delete_node() {
 
     for idx in "${selected[@]}"; do
         local sel_tag="${tags[$idx]}"
-        local sel_port=$(echo "$sel_tag" | grep -oE '[0-9]+$')
+        local sel_port="${ports[$idx]}"
 
         _proto_remove_inbound "$sel_tag"
 
@@ -1282,6 +1284,7 @@ _ui_modify_node() {
     echo -e "  名称: ${sel_name}"
     echo -e "  端口: ${sel_port}"
     echo ""
+    read -p "  新端口 (回车保持不变): " new_port
 
     # 新端口为空时保持不变
     [ -z "$new_port" ] && { _info "未修改，返回"; read -p "按回车键返回..."; return; }

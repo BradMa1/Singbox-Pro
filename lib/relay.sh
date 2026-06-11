@@ -341,7 +341,7 @@ _relay_gen_landing_token() {
     echo ""
 
     echo -n "保存 Token 到文件（回车跳过）: "; read -r save_t
-    [ -n "$save_t" ] && { echo "$b64" > "$save_t"; _success "已保存到 $save_t"; }
+    [ -n "$save_t" ] && { echo -e "$all_tokens" > "$save_t"; _success "已保存到 $save_t"; }
 
     read -p "按回车键返回..."
 }
