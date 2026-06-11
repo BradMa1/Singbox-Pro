@@ -98,13 +98,14 @@ _ui_main_menu() {
 
         echo -e "  ${CYAN}【系统维护】${NC}"
         echo -e "    ${GREEN}[12]${NC} 安装/更新核心    ${RED}[13]${NC} 卸载脚本"
+        echo -e "    ${GREEN}[14]${NC} 健康检查          ${GREEN}[15]${NC} 升级脚本"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-13]: " choice
+        read -p "  请输入选项 [0-15]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -120,6 +121,8 @@ _ui_main_menu() {
             11) _ui_streaming_dns_menu ;;
             12) _ui_update_core ;;
             13) _ui_uninstall ;;
+            14) _ui_health_check ;;
+            15) _ui_upgrade_scripts ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1559,6 +1562,25 @@ _ui_uninstall() {
 
     read -p "按回车键退出..."
     exit 0
+}
+
+# ============================================================
+# 健康检查（菜单 14）
+# ============================================================
+
+_ui_health_check() {
+    clear
+    _sb_health_check
+    read -p "按回车键返回..."
+}
+
+# ============================================================
+# 升级脚本（菜单 15）
+# ============================================================
+
+_ui_upgrade_scripts() {
+    clear
+    _sb_upgrade_scripts
 }
 
 # ============================================================
