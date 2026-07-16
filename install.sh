@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.1"
+export SCRIPT_VERSION="2.0.2"
 # SB_VERSION 由 lib/core.sh 统一定义（SSOT），安装阶段在下载模块后从中读取
 
 # --- 颜色 ---
@@ -106,8 +106,11 @@ _step_deps() {
             ;;
     esac
 
-    # 验证关键依赖
-    for cmd in curl jq openssl; do
+    # 验证关键依赖（curl / wget 至少其一，jq / openssl 必须）
+    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+        _err "核心依赖 curl 或 wget 均未安装，请先安装其中之一"
+    fi
+    for cmd in jq openssl; do
         command -v "$cmd" &>/dev/null || _err "核心依赖 ${cmd} 安装失败"
     done
 
@@ -233,7 +236,7 @@ _step_config() {
 }
 CONFEOF
         cat > "${SINGBOX_DIR}/metadata.json" << 'CONFEOF'
-{"version": "2.0.1", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
+{"version": "2.0.2", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
 CONFEOF
         _ok "配置文件已生成（极简模式）"
     fi
@@ -322,9 +325,11 @@ _step_firewall_hint() {
     _info "=========================================="
     echo ""
 
-    # 获取公网 IP
+    # 获取公网 IP（curl / wget 二选一）
     local ip=$(timeout 5 curl -s4 icanhazip.com 2>/dev/null || \
                timeout 5 curl -s4 ipinfo.io/ip 2>/dev/null || \
+               timeout 5 wget -qO- icanhazip.com 2>/dev/null || \
+               timeout 5 wget -qO- ipinfo.io/ip 2>/dev/null || \
                echo "未知")
 
     echo -e "  ${CYAN}服务器 IP:${NC} ${ip}"

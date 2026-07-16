@@ -3,7 +3,7 @@
 # warp.sh — WARP SOCKS5 代理模块
 # 使用 warp-plus 为 sing-box 提供全局 WARP 出口
 # ============================================================
-export WARP_MOD_VERSION="2.0.1"
+export WARP_MOD_VERSION="2.0.2"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then

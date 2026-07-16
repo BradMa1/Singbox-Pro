@@ -15,8 +15,10 @@
 ## 一键安装
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh || wget -qO- https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
 ```
+
+> 上面命令优先用 `curl`，若系统没有 `curl` 会自动回退到 `wget`（仅装了 wget 的精简系统也能一键安装）。
 如遇Alpine系统无法安装，可先执行以下命令：
 ```
 # 更新仓库索引
@@ -35,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.1              ║
+  ║              Singbox-Pro   v2.0.2              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -320,7 +322,7 @@ singbox-pro/
 
 ```bash
 export GH_MIRROR="https://ghproxy.com/"
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh || wget -qO- https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
 ```
 
 > `GH_MIRROR` 会作为 GitHub 镜像前缀使用（默认值 `https://ghproxy.net/`），可替换为任意可用镜像。该变量同时作用于安装脚本与各模块的下载回退逻辑。
@@ -338,6 +340,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.0.2 (2026-07-16)
+
+**优化**
+- 一键安装脚本与脚本内部下载全面支持 **wget 兜底**：系统没有 `curl` 时（仅装了 `wget` 的精简镜像）也能正常安装
+  - README 一键安装 / 国内加速命令改为 `curl ... || wget -qO- ...` 双兜底
+  - 依赖检查（`_check_deps`）放宽为 `curl` / `wget` 二选一
+  - 公网 IP 探测（`_get_public_ip`）增加 `wget` 回退路径
 
 ### v2.0.1 (2026-07-16)
 
