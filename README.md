@@ -35,7 +35,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.0              ║
+  ║              Singbox-Pro   v2.0.1              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -43,7 +43,7 @@ bash --version
   系统: Debian 12 | BBR: bbr | CPU: Intel Xeon E5-2xxx | 内存: 256M/1.0G | 磁盘: 18%
   IPv4: 151.244.134.189  IPV6: 无
 
-  Sing-box v1.13.12 ● 运行中 | Argo ● 运行中 (2隧道) | WARP ○ 未安装 | 节点: 5
+  Sing-box v1.13.14 ● 运行中 | Argo ● 运行中 (2隧道) | WARP ○ 未安装 | 节点: 5
   ─────────────────────────────────────────────────
   【节点管理】
     [1] 添加节点          [2] Argo 隧道节点
@@ -96,7 +96,7 @@ bash --version
   ✓ openssl (OpenSSL 3.1.4)
 
 ── sing-box ──
-  ✓ 二进制文件 (/usr/local/bin/sing-box v1.13.12)
+  ✓ 二进制文件 (/usr/local/bin/sing-box v1.13.14)
   ✓ 配置文件 (config.json 语法正确)
   ✓ 服务状态 (运行中)
 
@@ -139,11 +139,13 @@ bash --version
 | 临时隧道 | 免费，随机 `*.trycloudflare.com` 域名 |
 | 固定隧道 | 需要 Cloudflare Token + 自定义域名，更稳定 |
 
-子菜单: 创建 VLESS-WS/VMess-WS + Argo、查看/删除节点、重启隧道、查看日志、后台看门狗。
+子菜单: 创建 VLESS-WS/VMess-WS + Argo、查看/删除节点、重启隧道、查看日志。
+
+> Argo 隧道由 systemd 托管（`argo-tunnel@<端口>` / `argo-fixed@<端口>`，`Restart=always`），VPS 重启后自动恢复，无需看门狗。
 
 ## 查看节点链接（菜单 3）
 
-自动生成所有已启用协议的分享链接，保存到 `/etc/sing-box/uris.txt`。
+自动生成所有已启用协议的分享链接并打印到屏幕（不会写入文件）。
 
 ## 删除 / 修改节点（菜单 4/5）
 
@@ -255,13 +257,13 @@ bash --version
 ### 服务端（安装后）
 
 ```
-/etc/sing-box/
-├── config.json          # 主配置
+/usr/local/etc/sing-box/
+├── config.json          # 主配置（含 dns / route / ntp）
 ├── metadata.json        # 节点元数据（含 Reality public_key 等）
-├── uris.txt             # 节点链接
 ├── certs/               # 自签证书
 ├── pf.json              # 端口转发规则
 ├── relay.json           # 中转路由元数据
+├── argo/                # Argo 固定隧道 Token（权限 600）
 ├── argo_metadata.json   # Argo 隧道元数据
 ├── warp-meta.json       # WARP 域名分流元数据
 ├── .ipv6_dns_enabled    # IPv6 DNS 状态标记
@@ -270,21 +272,25 @@ bash --version
 └── .backup.*/           # sb upgrade 自动备份目录
 ```
 
+> sing-box 本体、Argo（cloudflared）、WARP（warp-plus）的可执行文件均安装在 `/usr/local/bin/`。
+
 ### 运行时
 
 ```
-/var/log/sing-box.log             # sing-box 运行日志
-/tmp/singbox_argo_*.pid           # Argo 隧道进程 PID
-/tmp/singbox_argo_*.log           # Argo 隧道日志
+/var/log/sing-box.log                       # sing-box 运行日志
+journalctl -u argo-tunnel@<端口>            # Argo 临时隧道日志（systemd）
+journalctl -u argo-fixed@<端口>             # Argo 固定隧道日志（systemd）
+journalctl -u warp-plus                     # WARP 日志（systemd）
 ```
 
-### 定时任务 & 系统配置
+### 系统配置
 
 ```
-crontab:
-* * * * * /usr/local/bin/sb keepalive   # Argo 看门狗
-
-/etc/logrotate.d/sing-box               # 日志轮转（保留 7 天，自动压缩）
+/etc/systemd/system/sing-box.service        # sing-box 服务（Restart=on-failure）
+/etc/systemd/system/argo-tunnel@.service    # Argo 临时隧道模板（Restart=always）
+/etc/systemd/system/argo-fixed@.service     # Argo 固定隧道模板（Restart=always）
+/etc/systemd/system/warp-plus.service       # WARP 服务（Restart=always）
+/etc/logrotate.d/sing-box                   # 日志轮转（保留 7 天，自动压缩）
 ```
 
 ### 项目源文件
@@ -317,6 +323,8 @@ export GH_MIRROR="https://ghproxy.com/"
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs/heads/main/install.sh)"
 ```
 
+> `GH_MIRROR` 会作为 GitHub 镜像前缀使用（默认值 `https://ghproxy.net/`），可替换为任意可用镜像。该变量同时作用于安装脚本与各模块的下载回退逻辑。
+
 ## 注意事项
 
 - VLESS Reality outbound 自动配置 `utls: chrome` 指纹（sing-box 要求）
@@ -331,7 +339,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
-### v2.0.1 (2026-06-11)
+### v2.0.1 (2026-07-16)
 
 **修复**
 - 修复「修改节点」功能因缺少用户输入导致永远返回「未修改」的 Bug
@@ -344,5 +352,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - 交互面板新增 **[14] 健康检查**、**[15] 升级脚本** 菜单项，小白用户无需记 CLI 命令
 - 安装脚本自动配置 logrotate 日志轮转（保留 7 天，自动压缩）
 
-**重构**
-- `SB_VERSION` 统一到 `core.sh`（SSOT 原则），移除 `sb.sh` / `singbox.sh` 中的重复定义
+**重构 / 优化**
+- `SB_VERSION` 统一到 `core.sh`（SSOT 原则），`install.sh` 不再硬编码版本号
+- 首次安装即生成含 `dns` / `route` / `ntp` 的完整配置，修复菜单 [9]/[10]/[11]（WARP / IPv6 DNS / 流媒体 DNS）因缺 dns 段而失效的问题
+- sing-box 版本升级至 **1.13.14**
+- Argo 隧道与 WARP 改为 **systemd 托管**（`Restart=always`），VPS 重启后自动恢复
+- 安装阶段补装 DNS 工具（`dnsutils` / `bind-tools` / `bind-utils`），健康检查 DNS 项不再误报
+- 中继线路机安装脚本自动识别 sing-box 安装路径（优先 `/usr/local`，回退官方 `/usr`）
+- 修复 README 文档漂移：配置路径、被夸大的 `sb keepalive` 看门狗、未实际保存的 `uris.txt`、`GH_MIRROR` 环境变量现已生效
+- `GH_MIRROR` 环境变量现已真正生效（作为 GitHub 镜像前缀）
+- 健康检查版本号取值统一；DNS 解析判定统一为单一工具 + 明确成功/失败
+- 清理冗余：`_download` 重复 curl、`sb restart` 双重启、`export -f` 多余导出

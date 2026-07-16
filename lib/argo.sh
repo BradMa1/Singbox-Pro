@@ -3,7 +3,7 @@
 # argo.sh — Cloudflare Argo Tunnel 管理模块
 # 支持临时隧道和固定隧道 (Token) 两种模式
 # ============================================================
-export ARGO_MOD_VERSION="2.0.0"
+export ARGO_MOD_VERSION="2.0.1"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -36,7 +36,7 @@ _argo_install() {
 
     # 镜像回退
     _warn "主源下载失败，尝试镜像..."
-    local mirror_url="https://ghproxy.net/${cf_url}"
+    local mirror_url="${GH_PROXY:-https://ghproxy.net/}${cf_url}"
     if _download "$mirror_url" "$CLOUDFLARED_BIN"; then
         chmod +x "$CLOUDFLARED_BIN"
         _success "cloudflared 安装完成 (镜像)"
@@ -47,20 +47,95 @@ _argo_install() {
     return 1
 }
 
+# --- systemd 服务模板（只写入一次）---
+# 临时隧道 与 固定隧道 各一个模板 unit，固定隧道 token 存到受保护文件，
+# 重启 VPS 后由 systemd 自动拉起（Restart=always）。
+_argo_ensure_service_template() {
+    [ "$INIT_SYSTEM" = "systemd" ] || return 0
+    if [ ! -f /etc/systemd/system/argo-tunnel@.service ]; then
+        cat > /etc/systemd/system/argo-tunnel@.service <<'EOF'
+[Unit]
+Description=Argo Tunnel (port %i)
+After=network.target sing-box.service
+Wants=sing-box.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://localhost:%i
+Restart=always
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+    if [ ! -f /etc/systemd/system/argo-fixed@.service ]; then
+        cat > /etc/systemd/system/argo-fixed@.service <<'EOF'
+[Unit]
+Description=Argo Fixed Tunnel (port %i)
+After=network.target sing-box.service
+Wants=sing-box.service
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --url http://localhost:%i --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
+Restart=always
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+}
+
 # --- 启动临时隧道 ---
 _argo_start_temp() {
-    local port="$1" protocol="${2:-tcp}"
+    local port="$1"
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        _argo_start_systemd_temp "$port"
+    else
+        _argo_start_nohup_temp "$port"
+    fi
+}
+
+_argo_start_systemd_temp() {
+    local port="$1"
+    _argo_ensure_service_template
+    _info "正在启动临时 Argo 隧道 (端口 ${port})..."
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now "argo-tunnel@${port}" >/dev/null 2>&1
+
+    local domain=""
+    for i in $(seq 1 20); do
+        sleep 1
+        domain=$(journalctl -u "argo-tunnel@${port}" -n 60 --no-pager 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -1)
+        [ -n "$domain" ] && break
+        [ "$((i % 3))" -eq 0 ] && _info "等待隧道就绪... (${i}s)"
+    done
+
+    if [ -z "$domain" ]; then
+        _error "临时隧道启动失败，请查看日志: journalctl -u argo-tunnel@${port}"
+        systemctl stop "argo-tunnel@${port}" 2>/dev/null || true
+        return 1
+    fi
+
+    local clean_domain=$(echo "$domain" | sed 's|https://||')
+    _success "临时隧道已启动: ${clean_domain}"
+    echo "$clean_domain"
+}
+
+_argo_start_nohup_temp() {
+    local port="$1"
     local log_file="/tmp/singbox_argo_${port}.log"
     local pid_file="/tmp/singbox_argo_${port}.pid"
-
     _info "正在启动临时 Argo 隧道 (端口 ${port})..."
-
     nohup "$CLOUDFLARED_BIN" tunnel --url "http://localhost:${port}" \
         --no-autoupdate > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
 
-    # 等待隧道域名出现
     local domain=""
     for i in $(seq 1 15); do
         sleep 1
@@ -86,58 +161,89 @@ _argo_start_temp() {
 # --- 启动固定隧道 (Token 模式) ---
 _argo_start_fixed() {
     local port="$1" token="$2"
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        _argo_start_systemd_fixed "$port" "$token"
+    else
+        _argo_start_nohup_fixed "$port" "$token"
+    fi
+}
+
+_argo_start_systemd_fixed() {
+    local port="$1" token="$2"
+    mkdir -p "${SINGBOX_DIR}/argo"
+    chmod 700 "${SINGBOX_DIR}/argo"
+    printf '%s' "$token" > "${SINGBOX_DIR}/argo/${port}.token"
+    chmod 600 "${SINGBOX_DIR}/argo/${port}.token"
+    _argo_ensure_service_template
+    _info "正在启动固定 Argo 隧道 (端口 ${port})..."
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now "argo-fixed@${port}" >/dev/null 2>&1
+    sleep 3
+    if systemctl is-active --quiet "argo-fixed@${port}" 2>/dev/null; then
+        _success "固定隧道已启动 (端口 ${port})"
+        return 0
+    fi
+    _error "固定隧道启动失败，请查看日志: journalctl -u argo-fixed@${port}"
+    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://localhost:${port}"
+    return 1
+}
+
+_argo_start_nohup_fixed() {
+    local port="$1" token="$2"
     local log_file="/tmp/singbox_argo_fixed_${port}.log"
     local pid_file="/tmp/singbox_argo_fixed_${port}.pid"
-
     _info "正在启动固定 Argo 隧道 (端口 ${port})..."
-
     nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
         --token "$token" \
         --url "http://localhost:${port}" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
-
     sleep 3
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        _error "固定隧道启动失败，请查看日志: $log_file"
-        _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://localhost:${port}"
-        rm -f "$pid_file"
-        return 1
+    if kill -0 "$pid" 2>/dev/null; then
+        _success "固定隧道已启动 (PID: ${pid})"
+        return 0
     fi
-
-    _success "固定隧道已启动 (PID: ${pid})"
-    return 0
+    _error "固定隧道启动失败，请查看日志: $log_file"
+    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://localhost:${port}"
+    rm -f "$pid_file"
+    return 1
 }
 
 # --- 停止隧道 ---
 _argo_stop() {
     local port="$1"
-
+    for svc in "argo-tunnel@${port}" "argo-fixed@${port}"; do
+        if systemctl cat "$svc" >/dev/null 2>&1; then
+            systemctl disable --now "$svc" 2>/dev/null || true
+        fi
+    done
+    rm -f "${SINGBOX_DIR}/argo/${port}.token" 2>/dev/null || true
+    # 兜底：清理残留 nohup 进程
     for pid_file in /tmp/singbox_argo_${port}.pid /tmp/singbox_argo_fixed_${port}.pid; do
         if [ -f "$pid_file" ]; then
             local pid=$(cat "$pid_file" 2>/dev/null)
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null
-                _info "已停止 Argo 隧道 (端口 ${port}, PID ${pid})"
-            fi
+            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
             rm -f "$pid_file"
         fi
     done
-
-    # 兜底：清理可能的残留进程
     pkill -f "cloudflared.*localhost:${port}" 2>/dev/null || true
 }
 
 # --- 停止所有隧道 ---
 _argo_stop_all() {
     _info "正在停止所有 Argo 隧道..."
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        local units=$(systemctl list-units --all --type=service --full 2>/dev/null | grep -oE 'argo-(tunnel|fixed)@[0-9]+\.service' | sort -u)
+        for svc in $units; do
+            systemctl disable --now "$svc" 2>/dev/null || true
+        done
+    fi
+    rm -f "${SINGBOX_DIR}/argo/"*.token 2>/dev/null || true
     for pid_file in /tmp/singbox_argo_*.pid /tmp/singbox_argo_fixed_*.pid; do
-        if [ -f "$pid_file" ]; then
-            local pid=$(cat "$pid_file" 2>/dev/null)
-            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-            rm -f "$pid_file"
-        fi
+        [ -f "$pid_file" ] || continue
+        local pid=$(cat "$pid_file" 2>/dev/null)
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+        rm -f "$pid_file"
     done
     pkill cloudflared 2>/dev/null || true
     _success "所有 Argo 隧道已停止"
@@ -151,25 +257,31 @@ _argo_get_status() {
     fi
 
     local running=false
-    for pid_file in /tmp/singbox_argo_*.pid /tmp/singbox_argo_fixed_*.pid; do
-        [ -f "$pid_file" ] || continue
-        local pid=$(cat "$pid_file" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            running=true
-            break
-        fi
-    done
 
-    if [ "$running" = true ]; then
-        # 清理已失效的残留 PID 文件（进程已死但文件残留）
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        local ports=$(jq -r '[.[]?.local_port | tostring] | unique[]?' "$ARGO_METADATA_FILE" 2>/dev/null || echo "")
+        for port in $ports; do
+            if systemctl is-active --quiet "argo-tunnel@${port}" 2>/dev/null || \
+               systemctl is-active --quiet "argo-fixed@${port}" 2>/dev/null; then
+                running=true
+                break
+            fi
+        done
+    fi
+
+    if [ "$running" = false ]; then
+        # 回退：检查 /tmp pid 文件（非 systemd 或 VPS 升级前残留）
         for pid_file in /tmp/singbox_argo_*.pid /tmp/singbox_argo_fixed_*.pid; do
             [ -f "$pid_file" ] || continue
             local pid=$(cat "$pid_file" 2>/dev/null)
-            if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-                rm -f "$pid_file"
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                running=true
+                break
             fi
         done
-        # 从 metadata 读取实际隧道数量（权威来源）
+    fi
+
+    if [ "$running" = true ]; then
         local count=$(_argo_count)
         echo "${GREEN}● 运行中${NC} (${count}隧道)"
     else
@@ -182,24 +294,27 @@ _argo_view_log() {
     local port="$1"
 
     if [ -n "$port" ]; then
-        local log_file="/tmp/singbox_argo_${port}.log"
-        [ -f "/tmp/singbox_argo_fixed_${port}.log" ] && log_file="/tmp/singbox_argo_fixed_${port}.log"
-
-        if [ -f "$log_file" ]; then
-            echo "=== Argo 隧道日志 (端口 ${port}) ==="
-            tail -30 "$log_file"
+        if [ "$INIT_SYSTEM" = "systemd" ]; then
+            local unit="argo-tunnel@${port}"
+            systemctl cat "argo-fixed@${port}" >/dev/null 2>&1 && unit="argo-fixed@${port}"
+            if systemctl cat "$unit" >/dev/null 2>&1; then
+                echo "=== Argo 隧道日志 (端口 ${port}) ==="
+                journalctl -u "$unit" -n 30 --no-pager
+            else
+                _warn "未找到端口 ${port} 的 Argo 隧道"
+            fi
         else
-            _warn "未找到端口 ${port} 的隧道日志"
+            local log_file="/tmp/singbox_argo_${port}.log"
+            [ -f "/tmp/singbox_argo_fixed_${port}.log" ] && log_file="/tmp/singbox_argo_fixed_${port}.log"
+            if [ -f "$log_file" ]; then
+                echo "=== Argo 隧道日志 (端口 ${port}) ==="
+                tail -30 "$log_file"
+            else
+                _warn "未找到端口 ${port} 的隧道日志"
+            fi
         fi
     else
-        # 显示最新日志
-        local latest_log=$(ls -t /tmp/singbox_argo_*.log /tmp/singbox_argo_fixed_*.log 2>/dev/null | head -1)
-        if [ -f "$latest_log" ]; then
-            echo "=== Argo 隧道日志 (最新) ==="
-            tail -30 "$latest_log"
-        else
-            _warn "未找到隧道日志"
-        fi
+        _warn "请指定端口查看日志（例如 sb → 2 → 查看日志）"
     fi
 }
 

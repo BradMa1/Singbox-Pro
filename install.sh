@@ -6,8 +6,8 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.0"
-export SB_VERSION="1.13.12"
+export SCRIPT_VERSION="2.0.1"
+# SB_VERSION 由 lib/core.sh 统一定义（SSOT），安装阶段在下载模块后从中读取
 
 # --- 颜色 ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
@@ -60,7 +60,7 @@ _dl_with_fallback() {
         return 0
     fi
     _warn "${desc} 主源下载失败，尝试镜像..."
-    local mirror="https://ghproxy.net/${url}"
+    local mirror="${GH_MIRROR:-https://ghproxy.net/}${url}"
     if _dl "$mirror" "$target"; then
         return 0
     fi
@@ -88,17 +88,17 @@ _step_deps() {
                 [ -f "$f" ] && grep -q "backports" "$f" 2>/dev/null && rm -f "$f"
             done
             apt-get update -qq 2>/dev/null || apt-get update -qq
-            apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 >/dev/null 2>&1
+            apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 dnsutils >/dev/null 2>&1
             ;;
         alpine)
             apk update >/dev/null 2>&1
-            apk add --no-cache curl wget openssl jq tar gzip net-tools iproute2 bash >/dev/null 2>&1
+            apk add --no-cache curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools >/dev/null 2>&1
             ;;
         centos|rhel|fedora|rocky|almalinux)
             if command -v dnf &>/dev/null; then
-                dnf install -y curl wget openssl jq tar gzip net-tools iproute >/dev/null 2>&1
+                dnf install -y curl wget openssl jq tar gzip net-tools iproute bind-utils >/dev/null 2>&1
             else
-                yum install -y curl wget openssl jq tar gzip net-tools iproute >/dev/null 2>&1
+                yum install -y curl wget openssl jq tar gzip net-tools iproute bind-utils >/dev/null 2>&1
             fi
             ;;
         *)
@@ -118,6 +118,12 @@ _step_deps() {
 # 第二步: 下载 sing-box 核心
 # ============================================================
 _step_singbox() {
+    # SB_VERSION 定义为 lib/core.sh（SSOT），模块已在前一步下载
+    if [ -z "${SB_VERSION:-}" ] && [ -f "${LIB_DIR}/core.sh" ]; then
+        source "${LIB_DIR}/core.sh" 2>/dev/null || true
+    fi
+    local version="${SB_VERSION:-1.13.14}"
+
     if [ -f "$SINGBOX_BIN" ]; then
         local current=$("$SINGBOX_BIN" version 2>/dev/null | head -1 | awk '{print $3}' || echo "?")
         _info "sing-box 已安装: v${current}"
@@ -126,12 +132,12 @@ _step_singbox() {
     fi
 
     local arch=$(_get_arch)
-    local pkg="sing-box-${SB_VERSION}-linux-${arch}"
+    local pkg="sing-box-${version}-linux-${arch}"
     # Alpine 使用 musl libc，需下载 musl 专用版本
     [ "$OS" == "alpine" ] && pkg="${pkg}-musl"
-    local url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/${pkg}.tar.gz"
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${version}/${pkg}.tar.gz"
 
-    _info "正在下载 sing-box v${SB_VERSION} (${arch})..."
+    _info "正在下载 sing-box v${version} (${arch})..."
     local tmp=$(mktemp -d)
 
     if ! _dl_with_fallback "$url" "${tmp}/sing-box.tar.gz" "sing-box"; then
@@ -148,7 +154,7 @@ _step_singbox() {
 
     chmod +x "$SINGBOX_BIN"
     rm -rf "$tmp"
-    _ok "sing-box v${SB_VERSION} 安装完成"
+    _ok "sing-box v${version} 安装完成"
 }
 
 # ============================================================
@@ -191,15 +197,24 @@ _step_config() {
 
     mkdir -p "$SINGBOX_DIR"
 
-    # 如果配置已存在，备份
-    if [ -s "${SINGBOX_DIR}/config.json" ]; then
-        cp "${SINGBOX_DIR}/config.json" "${SINGBOX_DIR}/config.json.backup.$(date +%Y%m%d_%H%M%S)"
-        _info "已备份现有配置"
-    fi
-
-    # 最小化配置：仅 log + 空 inbounds + direct/proxy 出站
-    # 保证 sing-box 在无节点时也能正常启动
-    cat > "${SINGBOX_DIR}/config.json" << 'CONFEOF'
+    # 优先使用 lib 模块生成完整配置（含 dns / route / ntp），
+    # 否则回退到内嵌极简配置（保证裸安装也能启动）
+    if [ -f "${LIB_DIR}/core.sh" ] && [ -f "${LIB_DIR}/singbox.sh" ]; then
+        # shellcheck disable=SC1091
+        source "${LIB_DIR}/core.sh" 2>/dev/null || true
+        # shellcheck disable=SC1091
+        source "${LIB_DIR}/singbox.sh" 2>/dev/null || true
+        _sb_generate_config
+        _sb_init_metadata
+        _ok "配置文件已生成（含 DNS / 路由 / NTP 完整配置）"
+    else
+        _warn "未找到 lib 模块，使用内嵌极简配置"
+        # 如果配置已存在，备份
+        if [ -s "${SINGBOX_DIR}/config.json" ]; then
+            cp "${SINGBOX_DIR}/config.json" "${SINGBOX_DIR}/config.json.backup.$(date +%Y%m%d_%H%M%S)"
+            _info "已备份现有配置"
+        fi
+        cat > "${SINGBOX_DIR}/config.json" << 'CONFEOF'
 {
     "log": {
         "level": "warn",
@@ -217,13 +232,11 @@ _step_config() {
     ]
 }
 CONFEOF
-
-    # 初始化元数据
-    cat > "${SINGBOX_DIR}/metadata.json" << 'CONFEOF'
-{"version": "2.0.0", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
+        cat > "${SINGBOX_DIR}/metadata.json" << 'CONFEOF'
+{"version": "2.0.1", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
 CONFEOF
-
-    _ok "配置文件已生成"
+        _ok "配置文件已生成（极简模式）"
+    fi
 }
 
 # ============================================================
@@ -354,8 +367,8 @@ echo ""
 
 _check_root
 _step_deps
-_step_singbox
 _step_scripts
+_step_singbox
 _step_config
 _step_service
 _step_firewall_hint

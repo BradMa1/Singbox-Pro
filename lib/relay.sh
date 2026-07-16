@@ -3,7 +3,7 @@
 # relay.sh — 中转/端口转发管理模块
 # 支持：协议中转 (落地机→中转机) + iptables 端口转发
 # ============================================================
-export RELAY_MOD_VERSION="2.0.0"
+export RELAY_MOD_VERSION="2.0.1"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -209,7 +209,19 @@ REALITY_SID=$(sing-box generate rand 8 --hex 2>/dev/null || echo "0123456789abcd
 read -p "监听端口（回车随机 20000-65000）: " USER_PORT
 LISTEN_PORT="${USER_PORT:-$(shuf -i 20000-65000 -n 1 2>/dev/null || echo 20443)}"
 
-RELAY_CONFIG_DIR="/etc/sing-box"
+# 检测 sing-box 安装路径（优先本项目路径 /usr/local，回退官方 /usr）
+if [ -x /usr/local/bin/sing-box ]; then
+    SB_BIN=/usr/local/bin/sing-box
+    SB_DIR=/usr/local/etc/sing-box
+elif [ -x /usr/bin/sing-box ]; then
+    SB_BIN=/usr/bin/sing-box
+    SB_DIR=/etc/sing-box
+else
+    # 默认按 Singbox-Pro 安装路径
+    SB_BIN=/usr/local/bin/sing-box
+    SB_DIR=/usr/local/etc/sing-box
+fi
+RELAY_CONFIG_DIR="$SB_DIR"
 mkdir -p "$RELAY_CONFIG_DIR"
 cat > "${RELAY_CONFIG_DIR}/config.json" <<EOF
 {"log":{"level":"info"},"inbounds":[{"type":"vless","tag":"vless-in","listen":"::","listen_port":$LISTEN_PORT,"users":[{"uuid":"$UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"__REALITY_SNI__","reality":{"enabled":true,"handshake":{"server":"__REALITY_SNI__","server_port":443},"private_key":"$REALITY_PK","short_id":["$REALITY_SID"]}}}],"outbounds":[{"type":"vless","tag":"relay-out","server":"__LANDING_IP__","server_port":__LANDING_PORT__,"uuid":"__LANDING_UUID__","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"addons.mozilla.org","reality":{"enabled":true,"public_key":"__LANDING_PBK__"},"utls":{"enabled":true,"fingerprint":"chrome"}}},{"type":"direct","tag":"direct"}],"route":{"rules":[{"inbound":"vless-in","outbound":"relay-out"}],"final":"direct"}}
@@ -222,7 +234,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
+ExecStart=${SB_BIN} run -c ${SB_DIR}/config.json
 Restart=on-failure
 RestartSec=10s
 

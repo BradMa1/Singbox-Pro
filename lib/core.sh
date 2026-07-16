@@ -3,7 +3,7 @@
 # core.sh — Singbox-Pro 核心工具模块
 # 被 sb.sh source 加载，也可独立运行进行环境检测
 # ============================================================
-export CORE_VERSION="2.0.0"
+export CORE_VERSION="2.0.1"
 
 # --- 颜色定义 ---
 if [ -z "${RED:-}" ]; then
@@ -344,18 +344,38 @@ if ! declare -f _verify_port_listen >/dev/null 2>&1; then
     }
 fi
 
+# --- DNS 解析检测 (统一工具，避免混用 nslookup/dig/host 的返回值) ---
+# 用法: _dns_resolve <domain>
+# 成功(退出码0) 输出解析到的首个 IP；失败(退出码1) 输出为空
+if ! declare -f _dns_resolve >/dev/null 2>&1; then
+    _dns_resolve() {
+        local domain="$1" ip=""
+        if command -v dig &>/dev/null; then
+            ip=$(dig +short +time=3 +tries=1 "$domain" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|^[0-9a-fA-F:]+$' | head -1)
+        elif command -v nslookup &>/dev/null; then
+            ip=$(nslookup "$domain" 2>/dev/null | awk -F': ' '/^Address: / {print $2}' | grep -E '^[0-9a-fA-F:.]+$' | head -1)
+        elif command -v host &>/dev/null; then
+            ip=$(host "$domain" 2>/dev/null | awk '/has (address|IPv6 address)/ {print $NF; exit}')
+        fi
+        [ -n "$ip" ] && { echo "$ip"; return 0; }
+        return 1
+    }
+fi
+
 # --- 文件下载 (多重试) ---
 if ! declare -f _download >/dev/null 2>&1; then
     _download() {
         local url="$1" target="$2"
-        curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$target" 2>/dev/null || \
         curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$target" 2>/dev/null || \
         wget -qO "$target" "$url" 2>/dev/null
     }
 fi
 
 # --- Sing-box 版本号 (SSOT - 唯一来源) ---
-export SB_VERSION="1.13.12"
+export SB_VERSION="1.13.14"
+
+# --- GitHub 镜像源 (可被 GH_MIRROR 环境变量覆盖，默认 ghproxy.net) ---
+export GH_PROXY="${GH_MIRROR:-https://ghproxy.net/}"
 
 # --- 核心路径定义 ---
 export SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
@@ -364,14 +384,6 @@ export CONFIG_FILE="${CONFIG_FILE:-${SINGBOX_DIR}/config.json}"
 export METADATA_FILE="${METADATA_FILE:-${SINGBOX_DIR}/metadata.json}"
 export ARGO_METADATA_FILE="${ARGO_METADATA_FILE:-${SINGBOX_DIR}/argo_metadata.json}"
 export CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}"
-
-# --- 导出所有函数供子模块使用 ---
-export -f _info _success _warn _warning _error 2>/dev/null || true
-export -f _check_root _url_encode _url_decode _ss_base64_encode 2>/dev/null || true
-export -f _detect_init_system _get_os_info _get_public_ip _get_ip 2>/dev/null || true
-export -f _check_port_occupied _atomic_modify_json _pkg_install 2>/dev/null || true
-export -f _manage_service _save_iptables_rules _random_port _random_hex 2>/dev/null || true
-export -f _verify_port_listen _download 2>/dev/null || true
 
 # --- 独立运行时的环境检测 ---
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

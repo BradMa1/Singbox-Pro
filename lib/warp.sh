@@ -3,7 +3,7 @@
 # warp.sh — WARP SOCKS5 代理模块
 # 使用 warp-plus 为 sing-box 提供全局 WARP 出口
 # ============================================================
-export WARP_MOD_VERSION="2.0.0"
+export WARP_MOD_VERSION="2.0.1"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -43,7 +43,7 @@ _warp_install() {
     # 下载 zip
     if ! _download "${base_url}/${zip_name}" "$tmp_zip"; then
         _warn "主源下载失败，尝试镜像..."
-        if ! _download "https://ghproxy.net/${base_url}/${zip_name}" "$tmp_zip"; then
+        if ! _download "${GH_PROXY:-https://ghproxy.net/}${base_url}/${zip_name}" "$tmp_zip"; then
             _error "warp-plus 下载失败"
             return 1
         fi
@@ -77,6 +77,40 @@ _warp_start() {
     _info "正在启动 WARP SOCKS5 代理 (端口 ${WARP_SOCKS_PORT})..."
     mkdir -p "$WARP_DIR"
 
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        # 写启动 wrapper，便于 systemd 调用与重启自恢复
+        cat > "${WARP_DIR}/warp-start.sh" <<EOF
+#!/bin/bash
+exec ${WARP_BIN} -b "127.0.0.1:${WARP_SOCKS_PORT}"
+EOF
+        chmod +x "${WARP_DIR}/warp-start.sh"
+        cat > /etc/systemd/system/warp-plus.service <<'EOF'
+[Unit]
+Description=WARP Plus SOCKS5 Proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/etc/warp/warp-start.sh
+Restart=always
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now warp-plus >/dev/null 2>&1
+        sleep 2
+        if systemctl is-active --quiet warp-plus 2>/dev/null || _warp_is_running; then
+            _success "WARP SOCKS5 代理已启动 (127.0.0.1:${WARP_SOCKS_PORT})"
+            return 0
+        fi
+        _error "WARP 启动失败，请查看日志: journalctl -u warp-plus"
+        return 1
+    fi
+
+    # 非 systemd 回退：nohup
     nohup "$WARP_BIN" -b "127.0.0.1:${WARP_SOCKS_PORT}" \
         > "${WARP_DIR}/warp.log" 2>&1 &
     local pid=$!
@@ -94,6 +128,12 @@ _warp_start() {
 
 # --- 停止 WARP ---
 _warp_stop() {
+    if [ "$INIT_SYSTEM" = "systemd" ] && systemctl cat warp-plus >/dev/null 2>&1; then
+        systemctl disable --now warp-plus 2>/dev/null || true
+        rm -f /etc/systemd/system/warp-plus.service
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+
     if ! _warp_is_running; then
         _info "WARP 未在运行"
         return 0
@@ -121,6 +161,9 @@ _warp_uninstall() {
 
 # --- 检查 WARP 运行状态 ---
 _warp_is_running() {
+    if systemctl is-active --quiet warp-plus 2>/dev/null; then
+        return 0
+    fi
     local pid=$(cat "${WARP_DIR}/warp.pid" 2>/dev/null)
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         return 0

@@ -12,7 +12,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.0"
+export SCRIPT_VERSION="2.0.1"
 export SCRIPT_NAME="Singbox-Pro"
 # SB_VERSION 定义在 core.sh（SSOT），加载模块后自动获取
 
@@ -98,8 +98,6 @@ main() {
         restart)
             _check_deps
             _load_modules
-            _manage_service "restart"
-            sleep 2
             _sb_restart_and_verify
             ;;
 

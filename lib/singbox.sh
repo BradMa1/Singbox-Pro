@@ -3,7 +3,7 @@
 # singbox.sh — Sing-box 核心安装/配置/服务管理模块
 # 可被 sb.sh source 加载，也可独立运行
 # ============================================================
-export SINGBOX_MOD_VERSION="2.0.0"
+export SINGBOX_MOD_VERSION="2.0.1"
 
 # --- 路径定义 ---
 SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
@@ -35,7 +35,7 @@ _get_arch() {
 # --- 安装/更新 sing-box 核心 ---
 _sb_install_core() {
     local arch=$(_get_arch)
-    local version="${1:-${SB_VERSION:-1.13.12}}"
+    local version="${1:-${SB_VERSION:-1.13.14}}"
     local tmp_dir=$(mktemp -d)
     local pkg_name="sing-box-${version}-linux-${arch}"
     # Alpine 使用 musl libc，需下载 musl 专用版本
@@ -48,7 +48,7 @@ _sb_install_core() {
     if ! _download "${base_url}/${pkg_name}.tar.gz" "${tmp_dir}/sing-box.tar.gz"; then
         # 镜像源回退
         _warn "GitHub 下载失败，尝试镜像源..."
-        local mirror_url="https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${version}/${pkg_name}.tar.gz"
+        local mirror_url="${GH_PROXY:-https://ghproxy.net/}https://github.com/SagerNet/sing-box/releases/download/v${version}/${pkg_name}.tar.gz"
         if ! _download "${mirror_url}" "${tmp_dir}/sing-box.tar.gz"; then
             _error "sing-box 下载失败，请检查网络"
             rm -rf "$tmp_dir"
@@ -173,21 +173,20 @@ SBEOF
 
 # --- 写入元数据 ---
 _sb_init_metadata() {
+    local ver="${SCRIPT_VERSION:-2.0.1}"
     if [ ! -f "$METADATA_FILE" ]; then
-        cat > "$METADATA_FILE" << 'METAEOF'
-{
-    "version": "2.0.0",
-    "created_at": "",
-    "server_ip": "",
-    "domain": "",
-    "protocols": {},
-    "argo": {}
-}
-METAEOF
+        jq -n --arg v "$ver" '{
+            version: $v,
+            created_at: "",
+            server_ip: "",
+            domain: "",
+            protocols: {},
+            argo: {}
+        }' > "$METADATA_FILE"
     fi
     local now=$(date '+%Y-%m-%d %H:%M:%S')
     local ip=$(_get_public_ip)
-    _atomic_modify_json "$METADATA_FILE" ".version = \"2.0.0\" | .created_at = \"$now\" | .server_ip = \"${ip:-127.0.0.1}\""
+    _atomic_modify_json "$METADATA_FILE" ".version = \"$ver\" | .created_at = \"$now\" | .server_ip = \"${ip:-127.0.0.1}\""
 }
 
 # --- 创建 systemd/OpenRC 服务 ---
@@ -438,7 +437,7 @@ _sb_upgrade_scripts() {
     echo ""
 
     local repo="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
-    local mirror="https://ghproxy.net/${repo}"
+    local mirror="${GH_PROXY:-https://ghproxy.net/}${repo}"
     local lib_dir="$(dirname "$(readlink -f "$0")")/lib"
 
     # 先检测最新版本号
@@ -563,7 +562,7 @@ _sb_health_check() {
     # 2. sing-box 二进制
     echo -e "${BLUE}── sing-box ──${NC}"
     if [ -f "$SINGBOX_BIN" ]; then
-        local sv=$("$SINGBOX_BIN" version 2>/dev/null | head -1 | awk '{print $NF}')
+        local sv=$("$SINGBOX_BIN" version 2>/dev/null | head -1 | awk '{print $3}')
         _include_status "二进制文件 ($SINGBOX_BIN v$sv)" "ok"
 
         # 检查配置有效性
@@ -612,15 +611,13 @@ _sb_health_check() {
     echo -e "${BLUE}── DNS 解析 ──${NC}"
     if command -v nslookup &>/dev/null || command -v dig &>/dev/null || command -v host &>/dev/null; then
         local dns_ok="ok"
+        local domain_ip=""
         for domain in "google.com" "baidu.com"; do
-            local result
-            result=$(timeout 3 nslookup "$domain" 2>/dev/null | grep -c "Address" || \
-                     timeout 3 dig +short "$domain" 2>/dev/null | head -1 || \
-                     timeout 3 host "$domain" 2>/dev/null | grep -c "has address" || echo "0")
-            if [ "$result" -gt 0 ] 2>/dev/null || [ -n "$result" ]; then
-                echo -e "    ${GREEN}✓${NC} ${domain} (解析正常)"
+            domain_ip=$(_dns_resolve "$domain" 2>/dev/null || true)
+            if [ -n "$domain_ip" ]; then
+                echo -e "    ${GREEN}✓${NC} ${domain} (${domain_ip})"
             else
-                echo -e "    ${YELLOW}○${NC} ${domain} (解析超时)"
+                echo -e "    ${YELLOW}○${NC} ${domain} (解析超时/失败)"
                 dns_ok="warn"
             fi
         done
