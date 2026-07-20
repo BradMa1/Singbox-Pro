@@ -74,6 +74,7 @@ _step_deps() {
     _info "正在安装系统依赖..."
 
     _detect_os
+    _info "检测到系统: ${OS}"
 
     case "$OS" in
         ubuntu|debian)
@@ -87,31 +88,47 @@ _step_deps() {
             for f in /etc/apt/sources.list.d/*; do
                 [ -f "$f" ] && grep -q "backports" "$f" 2>/dev/null && rm -f "$f"
             done
-            apt-get update -qq 2>/dev/null || apt-get update -qq
-            apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 dnsutils >/dev/null 2>&1
+            _info "更新 apt 软件源 (apt-get update)..."
+            # 容器常无有效软件源/离线：更新失败不致命，仅警告并继续
+            if ! apt-get update -qq 2>&1 | tail -8; then
+                _warn "apt-get update 失败（容器可能无有效软件源或离线），将尝试直接安装已有索引的包"
+            fi
+            _info "安装依赖: curl wget openssl jq tar gzip net-tools iproute2 dnsutils"
+            # 安装失败不再静默中止（此前因 set -e + 输出被吞导致卡死无提示）
+            if ! apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 dnsutils 2>&1 | tail -20; then
+                _warn "部分依赖安装失败，详见上方 apt 报错；将继续进行依赖检查"
+            fi
             ;;
         alpine)
-            apk update >/dev/null 2>&1
-            apk add --no-cache curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools >/dev/null 2>&1
+            _info "更新 apk 软件源 (apk update)..."
+            apk update 2>&1 | tail -8 || _warn "apk update 失败"
+            _info "安装依赖: curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools"
+            if ! apk add --no-cache curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools 2>&1 | tail -20; then
+                _warn "部分依赖安装失败，将继续进行依赖检查"
+            fi
             ;;
         centos|rhel|fedora|rocky|almalinux)
             if command -v dnf &>/dev/null; then
-                dnf install -y curl wget openssl jq tar gzip net-tools iproute bind-utils >/dev/null 2>&1
+                _info "安装依赖 (dnf): curl wget openssl jq tar gzip net-tools iproute bind-utils"
+                dnf install -y curl wget openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "dnf 安装失败"
             else
-                yum install -y curl wget openssl jq tar gzip net-tools iproute bind-utils >/dev/null 2>&1
+                _info "安装依赖 (yum): curl wget openssl jq tar gzip net-tools iproute bind-utils"
+                yum install -y curl wget openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "yum 安装失败"
             fi
             ;;
         *)
-            _warn "未识别的系统 (${OS})，尝试继续..."
+            _warn "未识别的系统 (${OS})，跳过自动安装，将进行依赖检查..."
             ;;
     esac
 
     # 验证关键依赖（curl / wget 至少其一，jq / openssl 必须）
+    # 此时若仍缺失，说明自动安装未成功，明确报错并给出上方 apt/dnf 报错作为定位依据
     if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
-        _err "核心依赖 curl 或 wget 均未安装，请先安装其中之一"
+        _err "核心依赖 curl 与 wget 均未安装，且自动安装失败。请手动安装其中之一后重试。"
     fi
     for cmd in jq openssl; do
-        command -v "$cmd" &>/dev/null || _err "核心依赖 ${cmd} 安装失败"
+        command -v "$cmd" &>/dev/null || \
+            _err "核心依赖 ${cmd} 未能安装。请手动安装后重试（脚本上方 apt/dnf 报错可定位原因）。"
     done
 
     _ok "系统依赖就绪"
