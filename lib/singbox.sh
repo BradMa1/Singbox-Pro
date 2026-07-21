@@ -125,6 +125,7 @@ _sb_generate_config() {
         "strategy": "prefer_ipv4"
     },
     "route": {
+        "default_domain_resolver": "dns-local",
         "rule_set": [
             {
                 "tag": "geosite-cn",
