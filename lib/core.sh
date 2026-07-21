@@ -74,14 +74,18 @@ fi
 # --- 系统环境检测 ---
 if ! declare -f _detect_init_system >/dev/null 2>&1; then
     _detect_init_system() {
-        if [ -f /sbin/openrc-run ] || command -v rc-service &>/dev/null; then
-            export INIT_SYSTEM="openrc"
-            export SERVICE_FILE="/etc/init.d/sing-box"
-        elif command -v systemctl &>/dev/null; then
+        # systemd 真正可用需 PID1 为 systemd（/run/systemd/system 目录存在）。
+        # 部分容器/虚拟化环境带有 systemctl 二进制但并未运行 systemd，
+        # 此时若误判为 systemd，会导致 unit 文件写了却启动不了（Unit not found）。
+        if [ -d /run/systemd/system ] && command -v systemctl &>/dev/null; then
             export INIT_SYSTEM="systemd"
             export SERVICE_FILE="/etc/systemd/system/sing-box.service"
+        elif command -v rc-service &>/dev/null || [ -f /sbin/openrc-run ]; then
+            export INIT_SYSTEM="openrc"
+            export SERVICE_FILE="/etc/init.d/sing-box"
         else
-            export INIT_SYSTEM="unknown"
+            # 无可用 init 系统（常见于面板/虚拟化容器），用 nohup 直接拉起
+            export INIT_SYSTEM="nohup"
             export SERVICE_FILE=""
         fi
     }
@@ -286,10 +290,18 @@ if ! declare -f _manage_service >/dev/null 2>&1; then
             systemd)
                 if [ "$action" == "status" ]; then
                     systemctl status sing-box --no-pager -l
-                else
-                    _info "正在使用 systemd 执行: $action..."
-                    systemctl "$action" sing-box
+                    return
                 fi
+                _info "正在使用 systemd 执行: $action..."
+                # unit 文件缺失则先自愈创建（install 阶段可能未写入）
+                if [ ! -f "$SERVICE_FILE" ] && command -v _sb_setup_service &>/dev/null; then
+                    _sb_setup_service 2>/dev/null || true
+                fi
+                if systemctl "$action" sing-box 2>/dev/null; then
+                    return 0
+                fi
+                _warn "systemctl ${action} 失败，回退 nohup 直接拉起..."
+                _sb_manage_nohup "$action"
                 ;;
             openrc)
                 if [ "$action" == "status" ]; then
@@ -298,6 +310,9 @@ if ! declare -f _manage_service >/dev/null 2>&1; then
                     _info "正在使用 OpenRC 执行: $action..."
                     rc-service sing-box "$action"
                 fi
+                ;;
+            nohup)
+                _sb_manage_nohup "$action"
                 ;;
             *)
                 _error "不支持的服务管理系统: $INIT_SYSTEM"

@@ -290,8 +290,10 @@ CONFEOF
 _step_service() {
     _info "正在设置系统服务..."
 
-    # 检测 init 系统
-    if command -v systemctl &>/dev/null; then
+    # 检测 init 系统（systemd 需真正运行；否则 openrc；再否则 nohup 直接拉起）
+    [ -z "${INIT_SYSTEM:-}" ] && _detect_init_system 2>/dev/null || true
+
+    if [ "$INIT_SYSTEM" == "systemd" ]; then
         cat > /etc/systemd/system/sing-box.service << EOF
 [Unit]
 Description=sing-box service
@@ -308,22 +310,25 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
+        systemctl daemon-reload 2>/dev/null || true
         systemctl enable sing-box >/dev/null 2>&1
 
-        # 启动并验证
+        # 启动并验证；systemd 不可用时（容器未运行 systemd）回退 nohup
         _info "正在启动 sing-box..."
-        systemctl restart sing-box
-        sleep 2
-
-        if systemctl is-active --quiet sing-box; then
+        if systemctl restart sing-box 2>/dev/null && systemctl is-active --quiet sing-box 2>/dev/null; then
             _ok "sing-box 服务已启动"
         else
-            _warn "sing-box 启动可能存在问题，请稍后检查: systemctl status sing-box"
-            _warn "常见原因: 空 inbounds 配置，添加节点后会自动恢复正常"
+            _warn "systemd 启动失败（容器可能未运行 systemd），回退 nohup 直接拉起..."
+            _sb_manage_nohup "restart"
+            sleep 2
+            if [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then
+                _ok "sing-box 已通过 nohup 启动（容器重启后不会自启，需手动运行: sb restart）"
+            else
+                _warn "sing-box 启动可能存在问题，请检查: cat /var/log/sing-box.log"
+            fi
         fi
 
-    elif command -v rc-service &>/dev/null; then
+    elif [ "$INIT_SYSTEM" == "openrc" ]; then
         cat > /etc/init.d/sing-box << 'SVCALPINE'
 #!/sbin/openrc-run
 name="sing-box"
@@ -336,8 +341,17 @@ SVCALPINE
         rc-update add sing-box default >/dev/null 2>&1
         rc-service sing-box restart 2>/dev/null || true
         _ok "sing-box OpenRC 服务已设置"
+
     else
-        _warn "无法识别 init 系统，请手动设置服务"
+        # 无 systemd / openrc（常见面板/虚拟化容器）：用 nohup 直接拉起
+        _info "未检测到 systemd/openrc，使用 nohup 直接拉起 sing-box..."
+        _sb_manage_nohup "restart"
+        sleep 2
+        if [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then
+            _ok "sing-box 已通过 nohup 启动（容器重启后不会自启，需手动运行: sb restart）"
+        else
+            _warn "sing-box 启动可能存在问题，请检查: cat /var/log/sing-box.log"
+        fi
     fi
 
     # 设置日志轮转（如果系统支持 logrotate）

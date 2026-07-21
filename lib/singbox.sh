@@ -227,6 +227,47 @@ SBOEPENRC
     fi
 }
 
+# --- nohup 方式管理服务（无 systemd / openrc 的容器环境）---
+_sb_manage_nohup() {
+    local action="$1"
+    local pid_file="/run/sing-box.pid"
+    local log_file="/var/log/sing-box.log"
+
+    case "$action" in
+        start|restart)
+            # 先停掉已有进程（按 pid 文件 + 进程名兜底）
+            if [ -f "$pid_file" ]; then
+                local old_pid
+                old_pid=$(cat "$pid_file" 2>/dev/null)
+                [ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
+                rm -f "$pid_file"
+            fi
+            pkill -f "${SINGBOX_BIN} run -c ${CONFIG_FILE}" 2>/dev/null || true
+            sleep 1
+            nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >"$log_file" 2>&1 &
+            echo $! > "$pid_file"
+            _info "sing-box 已通过 nohup 启动 (PID $(cat "$pid_file" 2>/dev/null))"
+            ;;
+        stop)
+            if [ -f "$pid_file" ]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null)
+                [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+                rm -f "$pid_file"
+            fi
+            pkill -f "${SINGBOX_BIN} run -c ${CONFIG_FILE}" 2>/dev/null || true
+            _info "sing-box 已停止"
+            ;;
+        status)
+            if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+                echo "sing-box 运行中 (nohup, PID $(cat "$pid_file"))"
+            else
+                echo "sing-box 已停止"
+            fi
+            ;;
+    esac
+}
+
 # --- 重启服务并验证 ---
 _sb_restart_and_verify() {
     _manage_service "restart"
@@ -237,17 +278,21 @@ _sb_restart_and_verify() {
             _success "sing-box 服务运行正常"
             return 0
         fi
+        _error "sing-box 启动失败，请检查日志: journalctl -u sing-box -n 30"
     elif [ "$INIT_SYSTEM" == "openrc" ]; then
         if rc-service sing-box status 2>/dev/null | grep -q "started"; then
             _success "sing-box 服务运行正常"
             return 0
         fi
-    fi
-
-    if [ "$INIT_SYSTEM" == "openrc" ]; then
         _error "sing-box 启动失败，请检查日志: cat /var/log/sing-box.log"
     else
-        _error "sing-box 启动失败，请检查日志: journalctl -u sing-box -n 30"
+        # nohup 模式：检查进程是否存活
+        local pid_file="/run/sing-box.pid"
+        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+            _success "sing-box 服务运行正常 (nohup, PID $(cat "$pid_file"))"
+            return 0
+        fi
+        _error "sing-box 启动失败，请检查日志: cat /var/log/sing-box.log"
     fi
     return 1
 }
@@ -294,7 +339,12 @@ _sb_get_status() {
             echo "${RED}○ 已停止${NC}"
         fi
     else
-        echo "${YELLOW}○ 未知${NC}"
+        local pid_file="/run/sing-box.pid"
+        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+            echo "${GREEN}● 运行中 (nohup)${NC}"
+        else
+            echo "${RED}○ 已停止${NC}"
+        fi
     fi
 }
 
