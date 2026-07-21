@@ -17,12 +17,26 @@ if [ -z "${RED:-}" ]; then
 fi
 
 # --- 打印函数 (强制输出到 stderr，防止干扰变量捕获) ---
+# 注意：每个函数独立判断是否已定义。
+# 此前把全部函数绑在 `if ! declare -f _info` 下，若调用方（如 install.sh）已定义
+# _info，则 _success/_error 等会被整体跳过导致「command not found」。
+# 改为逐个守卫后，无论调用方定义了哪些，缺的函数都会被补全。
 if ! declare -f _info >/dev/null 2>&1; then
     _info()    { echo -e "${CYAN}[信息] $1${NC}" >&2; }
+fi
+if ! declare -f _success >/dev/null 2>&1; then
     _success() { echo -e "${GREEN}[成功] $1${NC}" >&2; }
+fi
+if ! declare -f _warn >/dev/null 2>&1; then
     _warn()    { echo -e "${YELLOW}[注意] $1${NC}" >&2; }
+fi
+if ! declare -f _warning >/dev/null 2>&1; then
     _warning() { _warn "$1"; }  # 别名兼容
+fi
+if ! declare -f _ok >/dev/null 2>&1; then
     _ok()      { _success "$1"; }  # 别名兼容
+fi
+if ! declare -f _error >/dev/null 2>&1; then
     _error()   { echo -e "${RED}[错误] $1${NC}" >&2; }
 fi
 
