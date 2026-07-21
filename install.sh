@@ -91,6 +91,59 @@ _ensure_jq() {
     return 1
 }
 
+# openssl 静态二进制兜底：TLS 协议 (AnyTLS/TUIC/Hy2) 生成证书需要 openssl。
+# 容器 apt 源失效时装不上，但 GitHub 可达，从 userdocs/openssl-crossbuild 的 .deb 提取独立二进制。
+_ensure_openssl() {
+    command -v openssl &>/dev/null && return 0
+    _warn "openssl 未通过包管理器安装，尝试从 GitHub 下载静态二进制 (.deb 提取)..."
+    local arch
+    arch=$(_get_arch)
+    local deb_arch="$arch"
+    [ "$arch" = "aarch64" ] && deb_arch="arm64"
+    local ver="3.5.0"
+    local ossl_url="https://github.com/userdocs/openssl-crossbuild/releases/download/${ver}/ubuntu-noble-openssl-${deb_arch}.deb"
+    local tmp
+    tmp=$(mktemp -d)
+    if ! _dl_with_fallback "$ossl_url" "${tmp}/openssl.deb" "openssl 静态二进制"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    # 解包 .deb：优先 dpkg -x（Ubuntu/Debian 基础系统自带），否则回退 ar+tar
+    if command -v dpkg &>/dev/null; then
+        dpkg -x "${tmp}/openssl.deb" "$tmp" 2>/dev/null
+    else
+        ( cd "$tmp" && ar -x openssl.deb 2>/dev/null && tar -xzf data.tar.gz 2>/dev/null ) || {
+            _warn "openssl .deb 解包失败"
+            rm -rf "$tmp"
+            return 1
+        }
+    fi
+    if [ ! -f "${tmp}/opt/local/bin/openssl" ]; then
+        _warn "openssl 二进制未找到"
+        rm -rf "$tmp"
+        return 1
+    fi
+    # 复制真实二进制与共享库到 /usr/local（不污染系统 /usr/lib）
+    cp -f "${tmp}/opt/local/bin/openssl" /usr/local/bin/openssl.real
+    mkdir -p /usr/local/lib
+    cp -f "${tmp}/opt/local/lib/libssl.so.3" /usr/local/lib/ 2>/dev/null || true
+    cp -f "${tmp}/opt/local/lib/libcrypto.so.3" /usr/local/lib/ 2>/dev/null || true
+    chmod +x /usr/local/bin/openssl.real
+    # 包装脚本：确保运行时能找到独立库（即便 ldconfig 不可用也稳）
+    cat > /usr/local/bin/openssl << WRAP
+#!/bin/bash
+exec env LD_LIBRARY_PATH=/usr/local/lib:/opt/local/lib:\${LD_LIBRARY_PATH} /usr/local/bin/openssl.real "\$@"
+WRAP
+    chmod +x /usr/local/bin/openssl
+    command -v ldconfig &>/dev/null && ldconfig 2>/dev/null || true
+    rm -rf "$tmp"
+    if command -v openssl &>/dev/null && openssl version &>/dev/null 2>&1; then
+        _ok "openssl 静态二进制已就绪: $(openssl version 2>/dev/null || echo unknown)"
+        return 0
+    fi
+    return 1
+}
+
 _step_deps() {
     _info "正在安装系统依赖..."
 
@@ -151,9 +204,10 @@ _step_deps() {
     if ! command -v jq &>/dev/null; then
         _ensure_jq || _err "jq 未能安装（包管理器与静态下载均失败）。请手动安装 jq 后重试。"
     fi
-    # 3) openssl：仅 TLS 协议 (AnyTLS/TUIC/Hy2) 生成证书时需要，缺失仅警告
+    # 3) openssl：TLS 协议 (AnyTLS/TUIC/Hy2) 生成证书需要；
+    #    包管理器装不上则从 GitHub 下载静态二进制兜底，仍失败才警告（不影响非 TLS 协议）
     if ! command -v openssl &>/dev/null; then
-        _warn "openssl 未安装（TLS 协议生成证书时需要，可稍后用 'apt-get install openssl' 或静态方式补装）"
+        _ensure_openssl || _warn "openssl 未能安装（TLS 协议生成证书时会失败；可稍后用 'apt-get install openssl' 或手动补装）"
     fi
 
     _ok "系统依赖就绪"
