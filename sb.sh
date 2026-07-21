@@ -62,17 +62,23 @@ _load_modules() {
 
 # --- 检查依赖 ---
 _check_deps() {
-    local missing=""
-    for cmd in jq curl openssl; do
+    # 硬依赖：jq / curl 必须存在（JSON 解析与下载）
+    local hard_missing=""
+    for cmd in jq curl; do
         if ! command -v "$cmd" &>/dev/null; then
-            missing="$missing $cmd"
+            hard_missing="$hard_missing $cmd"
         fi
     done
-
-    if [ -n "$missing" ]; then
-        echo -e "\033[0;31m[错误]\033[0m 缺少核心依赖:${missing}"
-        echo "请运行: apt-get install -y jq curl openssl"
+    if [ -n "$hard_missing" ]; then
+        echo -e "\033[0;31m[错误]\033[0m 缺少核心依赖:${hard_missing}"
+        echo "请运行: apt-get install -y jq curl"
         exit 1
+    fi
+
+    # 软依赖：openssl 仅 TLS 协议 (AnyTLS/TUIC/Hy2) 生成证书时需要。
+    # 容器 apt 源失效时可能装不上，但不应阻断面板本身启动（非 TLS 协议仍可用）。
+    if ! command -v openssl &>/dev/null; then
+        echo -e "\033[0;33m[注意]\033[0m openssl 未安装：使用 TLS 类协议 (AnyTLS/TUIC/Hy2) 前请先安装（apt-get install -y openssl 或静态方式）"
     fi
 }
 

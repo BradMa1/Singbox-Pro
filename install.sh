@@ -421,8 +421,13 @@ _step_service
 _step_firewall_hint
 
 # 自动进入管理面板
-if command -v sb &>/dev/null; then
+# 优先用绝对路径（避免某些容器 PATH 不含 /usr/local/bin 时 command -v 找不到）
+if [ -x "$SHORTCUT" ]; then
+    exec "$SHORTCUT"
+elif command -v sb &>/dev/null; then
     exec sb
+elif [ -x "$SB_SCRIPT" ]; then
+    exec bash "$SB_SCRIPT"
 else
-    echo -e "  ${YELLOW}快捷命令 sb 未就绪，请手动运行: bash ${SB_SCRIPT}${NC}"
+    echo -e "  ${YELLOW}管理面板启动文件未就绪，请手动运行: bash ${SB_SCRIPT}${NC}"
 fi
