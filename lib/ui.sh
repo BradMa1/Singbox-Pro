@@ -1129,8 +1129,46 @@ _ui_streaming_dns_menu() {
 # 节点查看/删除
 # ============================================================
 
+_ensure_node_metadata_names() {
+    # 自动补全旧节点（升级前添加、未写名字）的显示名，避免查看链接显示成 类型-端口
+    [ -f "$METADATA_FILE" ] || return 0
+    local prefix
+    prefix=$(jq -r '[(.protocols//{})[] | select((.name//"") | test("-vless-reality$")) | .name | sub("-vless-reality$";"")][0] // empty' "$METADATA_FILE" 2>/dev/null)
+    [ -n "$prefix" ] || return 0
+    local raw
+    raw=$(_proto_list_inbounds 2>/dev/null) || return 0
+    [ -n "$raw" ] || return 0
+    local ins
+    ins=$(printf '%s\n' "$raw" | grep -v '^[[:space:]]*$' | jq -s '.' 2>/dev/null)
+    [ -n "$ins" ] || return 0
+    local tmp
+    tmp=$(mktemp)
+    jq --arg p "$prefix" --argjson inbounds "$ins" '
+        ($inbounds) as $list | ($p) as $prefix |
+        reduce $list[] as $in (.;
+            ($in.tag) as $tag |
+            ($in.type) as $type |
+            (if (.protocols[$tag].name // "") != "" then . else
+                (.protocols[$tag].name = ($prefix + "-" + (
+                    if $type == "vless" then "vless-reality"
+                    elif $type == "anytls" then "anytls"
+                    elif $type == "tuic" then "tuic"
+                    elif $type == "hysteria2" then "hy2"
+                    elif $type == "vmess" then "vmess-ws"
+                    else $type end)))
+            end)
+        )
+    ' "$METADATA_FILE" > "$tmp" 2>/dev/null
+    if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
+        mv "$tmp" "$METADATA_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 _ui_view_nodes() {
     _require_singbox || return 1
+    _ensure_node_metadata_names
 
     clear
     echo -e "${CYAN}=== 查看节点链接 ===${NC}"
