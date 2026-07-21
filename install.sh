@@ -70,6 +70,27 @@ _dl_with_fallback() {
 # ============================================================
 # 第一步: 安装系统依赖
 # ============================================================
+
+# jq 静态二进制兜底：很多精简/容器环境 apt 源失效（连不上 Ubuntu 官方源），
+# 但 GitHub 通常可达。包管理器装不上 jq 时，直接从 GitHub 下载静态二进制。
+_ensure_jq() {
+    command -v jq &>/dev/null && return 0
+    _warn "jq 未通过包管理器安装，尝试从 GitHub 下载静态二进制..."
+    local arch
+    arch=$(_get_arch)
+    local jq_url="https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-${arch}"
+    if _dl_with_fallback "$jq_url" "/usr/local/bin/jq" "jq 静态二进制"; then
+        chmod +x /usr/local/bin/jq
+        # 确保 /usr/local/bin 在 PATH（root 通常已在）
+        export PATH="/usr/local/bin:${PATH}"
+        if command -v jq &>/dev/null; then
+            _ok "jq 静态二进制已就绪: $(jq --version 2>/dev/null || echo unknown)"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 _step_deps() {
     _info "正在安装系统依赖..."
 
@@ -121,15 +142,19 @@ _step_deps() {
             ;;
     esac
 
-    # 验证关键依赖（curl / wget 至少其一，jq / openssl 必须）
-    # 此时若仍缺失，说明自动安装未成功，明确报错并给出上方 apt/dnf 报错作为定位依据
+    # 验证关键依赖
+    # 1) curl / wget 至少其一（下载用）
     if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
         _err "核心依赖 curl 与 wget 均未安装，且自动安装失败。请手动安装其中之一后重试。"
     fi
-    for cmd in jq openssl; do
-        command -v "$cmd" &>/dev/null || \
-            _err "核心依赖 ${cmd} 未能安装。请手动安装后重试（脚本上方 apt/dnf 报错可定位原因）。"
-    done
+    # 2) jq：先静态二进制兜底（绕开元源失效问题），仍失败才明确报错
+    if ! command -v jq &>/dev/null; then
+        _ensure_jq || _err "jq 未能安装（包管理器与静态下载均失败）。请手动安装 jq 后重试。"
+    fi
+    # 3) openssl：仅 TLS 协议 (AnyTLS/TUIC/Hy2) 生成证书时需要，缺失仅警告
+    if ! command -v openssl &>/dev/null; then
+        _warn "openssl 未安装（TLS 协议生成证书时需要，可稍后用 'apt-get install openssl' 或静态方式补装）"
+    fi
 
     _ok "系统依赖就绪"
 }
