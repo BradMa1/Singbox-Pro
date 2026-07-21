@@ -135,7 +135,7 @@ _sb_generate_config() {
                 "tag": "geosite-category-companies-cn",
                 "type": "remote",
                 "format": "binary",
-                "url": "https://github.com/SagerNet/sing-geosite/raw/refs/heads/rule-set/geosite-category-companies-cn.srs"
+                "url": "https://github.com/SagerNet/sing-geosite/raw/refs/heads/rule-set/geosite-category-companies@cn.srs"
             },
             {
                 "tag": "geoip-cn",
