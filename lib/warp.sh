@@ -208,7 +208,7 @@ _warp_add_dns_server() {
         --arg tag "$_WARP_DNS_TAG" \
         '{
             "tag": $tag,
-            "address": "https://1.1.1.1/dns-query",
+            "server": "https://1.1.1.1/dns-query",
             "detour": "warp-socks5"
         }')
 

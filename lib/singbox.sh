@@ -103,13 +103,15 @@ _sb_generate_config() {
             {
                 "type": "udp",
                 "tag": "dns-local",
-                "address": "223.5.5.5",
+                "server": "223.5.5.5",
+                "server_port": 53,
                 "detour": "direct"
             },
             {
                 "type": "udp",
                 "tag": "dns-remote",
-                "address": "8.8.8.8",
+                "server": "8.8.8.8",
+                "server_port": 53,
                 "detour": "proxy"
             }
         ],
@@ -394,8 +396,8 @@ _dns_ipv6_enable() {
     _sb_backup_config
     _atomic_modify_json "$CONFIG_FILE" '
         .dns.strategy = "prefer_ipv6" |
-        (.dns.servers[] | select(.tag == "dns-local") | .address) = "2400:3200::1" |
-        (.dns.servers[] | select(.tag == "dns-remote") | .address) = "2001:4860:4860::8888"
+        (.dns.servers[] | select(.tag == "dns-local") | .server) = "2400:3200::1" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "2001:4860:4860::8888"
     '
     touch "$IPV6_DNS_STATE"
     _sb_restart_and_verify
@@ -407,8 +409,8 @@ _dns_ipv6_disable() {
     _sb_backup_config
     _atomic_modify_json "$CONFIG_FILE" '
         .dns.strategy = "prefer_ipv4" |
-        (.dns.servers[] | select(.tag == "dns-local") | .address) = "223.5.5.5" |
-        (.dns.servers[] | select(.tag == "dns-remote") | .address) = "8.8.8.8"
+        (.dns.servers[] | select(.tag == "dns-local") | .server) = "223.5.5.5" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "8.8.8.8"
     '
     rm -f "$IPV6_DNS_STATE"
     _sb_restart_and_verify
@@ -444,7 +446,7 @@ _streaming_dns_set() {
     fi
 
     # 添加新的流媒体 DNS
-    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","address":"'"$addr"'","detour":"proxy"}]'
+    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","server":"'"$addr"'","server_port":53,"detour":"proxy"}]'
     _atomic_modify_json "$CONFIG_FILE" '.dns.rules += [{
         "domain_suffix": [
             "netflix.com", "nflxvideo.net", "nflxext.com",
