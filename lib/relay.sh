@@ -302,7 +302,7 @@ _relay_gen_landing_token() {
         local ntag=$(echo "$node" | jq -r '.tag // ""')
         echo -e "    ${GREEN}[$i]${NC} ${ntype}:${nport}${ntag:+ (${ntag})}"
         relay_choices[$i]="$node"
-        ((i++))
+        i=$((i + 1))
     done <<< "$nodes"
 
     echo ""
@@ -553,7 +553,7 @@ _relay_delete_route() {
         local lt=$(echo "$item" | jq -r '.local_port')
         local lb=$(echo "$item" | jq -r '.landing')
         echo -e "  ${GREEN}[$i]${NC} 端口${lt} → ${lb}"
-        ((i++))
+        i=$((i + 1))
     done <<< "$(jq -c '.[]' "$RELAY_META")"
 
     echo ""

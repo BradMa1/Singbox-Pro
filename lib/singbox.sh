@@ -530,7 +530,7 @@ _sb_upgrade_scripts() {
         local target
 
         if [ "$fname" = "sb.sh" ]; then
-            target="$(dirname "$(readlink -f "$0")")/../sb.sh"
+            target="$(readlink -f "$0")"
         else
             target="${lib_dir}/${fname#lib/}"
         fi
@@ -543,19 +543,19 @@ _sb_upgrade_scripts() {
         if curl -fsSL --connect-timeout 15 --max-time 60 "$furl" -o "$target" 2>/dev/null; then
             [ -x "$target" ] || chmod +x "$target"
             echo -e "  ${GREEN}✓${NC} ${fname}"
-            ((success++))
+            success=$((success + 1))
         else
             # 镜像回退
             local fmirror="${furl/${repo}/${mirror}}"
             if curl -fsSL --connect-timeout 15 --max-time 60 "$fmirror" -o "$target" 2>/dev/null; then
                 [ -x "$target" ] || chmod +x "$target"
                 echo -e "  ${GREEN}✓${NC} ${fname} (镜像)"
-                ((success++))
+                success=$((success + 1))
             else
                 # 恢复备份
                 [ -f "${backup_dir}/${fname##*/}" ] && cp "${backup_dir}/${fname##*/}" "$target"
                 echo -e "  ${RED}✗${NC} ${fname}"
-                ((fail++))
+                fail=$((fail + 1))
             fi
         fi
     done
