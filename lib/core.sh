@@ -158,11 +158,11 @@ _get_ipv6() {
 # --- BBR 状态 ---
 _get_bbr() {
     local cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
-    [ -z "$cc" ] && { echo "${RED}?${NC}"; return; }
+    [ -z "$cc" ] && { echo -e "${RED}?${NC}"; return; }
     if echo "$cc" | grep -qi "bbr"; then
-        echo "${GREEN}${cc}${NC}"
+        echo -e "${GREEN}${cc}${NC}"
     else
-        echo "${YELLOW}${cc}${NC}"
+        echo -e "${YELLOW}${cc}${NC}"
     fi
 }
 

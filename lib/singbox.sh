@@ -101,11 +101,13 @@ _sb_generate_config() {
     "dns": {
         "servers": [
             {
+                "type": "udp",
                 "tag": "dns-local",
                 "address": "223.5.5.5",
                 "detour": "direct"
             },
             {
+                "type": "udp",
                 "tag": "dns-remote",
                 "address": "8.8.8.8",
                 "detour": "proxy"
@@ -322,28 +324,28 @@ _sb_get_version() {
 # --- 获取服务状态 ---
 _sb_get_status() {
     if ! _sb_is_installed; then
-        echo "${RED}○ 未安装${NC}"
+        echo -e "${RED}○ 未安装${NC}"
         return
     fi
 
     if [ "$INIT_SYSTEM" == "systemd" ]; then
         if systemctl is-active --quiet sing-box 2>/dev/null; then
-            echo "${GREEN}● 运行中${NC}"
+            echo -e "${GREEN}● 运行中${NC}"
         else
-            echo "${RED}○ 已停止${NC}"
+            echo -e "${RED}○ 已停止${NC}"
         fi
     elif [ "$INIT_SYSTEM" == "openrc" ]; then
         if rc-service sing-box status 2>/dev/null | grep -q "started"; then
-            echo "${GREEN}● 运行中${NC}"
+            echo -e "${GREEN}● 运行中${NC}"
         else
-            echo "${RED}○ 已停止${NC}"
+            echo -e "${RED}○ 已停止${NC}"
         fi
     else
         local pid_file="/run/sing-box.pid"
         if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
-            echo "${GREEN}● 运行中 (nohup)${NC}"
+            echo -e "${GREEN}● 运行中 (nohup)${NC}"
         else
-            echo "${RED}○ 已停止${NC}"
+            echo -e "${RED}○ 已停止${NC}"
         fi
     fi
 }
@@ -378,9 +380,9 @@ STREAMING_DNS_STATE="${SINGBOX_DIR}/.streaming_dns"
 # --- IPv6 DNS 状态 ---
 _dns_ipv6_status() {
     if [ -f "$IPV6_DNS_STATE" ]; then
-        echo "${GREEN}● IPv6 优先${NC}"
+        echo -e "${GREEN}● IPv6 优先${NC}"
     else
-        echo "${YELLOW}○ IPv4 优先${NC}（默认）"
+        echo -e "${YELLOW}○ IPv4 优先${NC}（默认）"
     fi
 }
 
@@ -417,9 +419,9 @@ _dns_ipv6_disable() {
 _streaming_dns_status() {
     if [ -f "$STREAMING_DNS_STATE" ]; then
         local addr=$(cat "$STREAMING_DNS_STATE")
-        echo "${GREEN}● ${addr}${NC}"
+        echo -e "${GREEN}● ${addr}${NC}"
     else
-        echo "${YELLOW}○ 未设置${NC}"
+        echo -e "${YELLOW}○ 未设置${NC}"
     fi
 }
 

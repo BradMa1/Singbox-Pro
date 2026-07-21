@@ -252,7 +252,7 @@ _argo_stop_all() {
 # --- 获取 Argo 状态 ---
 _argo_get_status() {
     if [ ! -f "$CLOUDFLARED_BIN" ]; then
-        echo "${RED}○ 未安装${NC}"
+        echo -e "${RED}○ 未安装${NC}"
         return
     fi
 
@@ -283,9 +283,9 @@ _argo_get_status() {
 
     if [ "$running" = true ]; then
         local count=$(_argo_count)
-        echo "${GREEN}● 运行中${NC} (${count}隧道)"
+        echo -e "${GREEN}● 运行中${NC} (${count}隧道)"
     else
-        echo "${YELLOW}○ 已安装 (未运行)${NC}"
+        echo -e "${YELLOW}○ 已安装 (未运行)${NC}"
     fi
 }
 

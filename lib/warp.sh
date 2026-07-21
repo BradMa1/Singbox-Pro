@@ -175,14 +175,14 @@ _warp_is_running() {
 
 _warp_get_status() {
     if [ ! -f "$WARP_BIN" ]; then
-        echo "${RED}○ 未安装${NC}"
+        echo -e "${RED}○ 未安装${NC}"
         return
     fi
 
     if _warp_is_running; then
-        echo "${GREEN}● 运行中${NC} (:${WARP_SOCKS_PORT})"
+        echo -e "${GREEN}● 运行中${NC} (:${WARP_SOCKS_PORT})"
     else
-        echo "${YELLOW}○ 已安装 (未运行)${NC}"
+        echo -e "${YELLOW}○ 已安装 (未运行)${NC}"
     fi
 }
 
