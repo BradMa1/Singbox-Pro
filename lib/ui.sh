@@ -419,6 +419,16 @@ _ui_add_anytls_quick() {
     local inbound_json=$(_proto_anytls_config "$port" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
+    local meta_json=$(jq -n \
+        --arg tag "anytls-${port}" \
+        --arg name "$name" \
+        --arg password "$password" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "anytls", password: $password, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
+
     echo "anytls|${name}|${port}||||${password}||"
 }
 
@@ -440,6 +450,17 @@ _ui_add_tuic_quick() {
     local inbound_json=$(_proto_tuic_config "$port" "$uuid" "$password")
     _proto_add_inbound "$inbound_json" || return 1
 
+    local meta_json=$(jq -n \
+        --arg tag "tuic-${port}" \
+        --arg name "$name" \
+        --arg uuid "$uuid" \
+        --arg password "$password" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "tuic", uuid: $uuid, password: $password, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
+
     echo "tuic|${name}|${port}|${uuid}|||${password}|"
 }
 
@@ -459,6 +480,16 @@ _ui_add_hy2_quick() {
 
     local inbound_json=$(_proto_hy2_config "$port" "$password")
     _proto_add_inbound "$inbound_json" || return 1
+
+    local meta_json=$(jq -n \
+        --arg tag "hysteria2-${port}" \
+        --arg name "$name" \
+        --arg password "$password" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "hysteria2", password: $password, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
     echo "hy2|${name}|${port}||||${password}||"
 }
@@ -480,6 +511,17 @@ _ui_add_vmess_ws_quick() {
 
     local inbound_json=$(_proto_vmess_ws_config "$port" "$uuid" "$ws_path")
     _proto_add_inbound "$inbound_json" || return 1
+
+    local meta_json=$(jq -n \
+        --arg tag "vmess-ws-${port}" \
+        --arg name "$name" \
+        --arg uuid "$uuid" \
+        --arg ws_path "$ws_path" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "vmess-ws", uuid: $uuid, ws_path: $ws_path, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
     echo "vmess|${name}|${port}|${uuid}||||${ws_path}"
 }
