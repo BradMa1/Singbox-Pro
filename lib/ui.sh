@@ -3,7 +3,7 @@
 # ui.sh — Singbox-Pro 可视化菜单模块
 # 所有菜单、面板、状态显示集中管理
 # ============================================================
-export UI_MOD_VERSION="2.0.0"
+export UI_MOD_VERSION="2.0.4"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -14,7 +14,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.0}"
+SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.4}"
 
 # ============================================================
 # 顶部横幅
@@ -699,13 +699,11 @@ _ui_argo_add_fixed() {
     _sb_restart_and_verify
 
     echo ""
-    _info "请确认已在 Cloudflare Dashboard 配置:"
-    _info "  Public Hostname: ${tunnel_domain}"
-    _info "  Service: http://127.0.0.1:${port}"
+    _info "脚本将自动生成 ingress 配置并覆盖 CF Dashboard 默认路由,"
+    _info "无需手动在 Dashboard 修改 Public Hostname 的 Service URL。"
     echo ""
-    read -p "确认无误后按回车键继续..."
 
-    _argo_start_fixed "$port" "$token" || {
+    _argo_start_fixed "$port" "$token" "$tunnel_domain" || {
         _proto_remove_inbound "$tag"
         _manage_service "restart"
         read -p "按回车键返回..."
@@ -841,7 +839,7 @@ _ui_argo_temp_to_fixed() {
     _argo_stop "$convert_port"
 
     # 启动固定隧道
-    _argo_start_fixed "$convert_port" "$token" || { read -p "按回车键返回..."; return; }
+    _argo_start_fixed "$convert_port" "$token" "$tunnel_domain" || { read -p "按回车键返回..."; return; }
 
     # 更新元数据
     _atomic_modify_json "$ARGO_METADATA_FILE" ".\"$convert_tag\".type = \"fixed\" | .\"$convert_tag\".domain = \"$tunnel_domain\" | .\"$convert_tag\".token = \"$token\""

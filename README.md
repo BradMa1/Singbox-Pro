@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.3              ║
+  ║              Singbox-Pro   v2.0.4              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -343,6 +343,10 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.0.4 (2026-07-23)
+- **修复(Argo 固定隧道)**: 固定隧道启动改为脚本自带本地 `config.yml` 写死 ingress（`http://127.0.0.1:端口` + 域名），用 `--config` 加载，**覆盖 CF Dashboard 默认 Service URL**（`https://localhost:端口`）。用户不再需要手动在 Dashboard 修改 Public Hostname 路由，加任意端口/域名的固定隧道都自动对齐。
+- **修复**: 固定隧道添加/转换时透传域名给启动函数（之前漏传 `tunnel_domain`，导致本地 ingress 配置无法生成）。
 
 ### v2.0.3 (2026-07-23)
 
