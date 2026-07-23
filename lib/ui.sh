@@ -3,7 +3,7 @@
 # ui.sh — Singbox-Pro 可视化菜单模块
 # 所有菜单、面板、状态显示集中管理
 # ============================================================
-export UI_MOD_VERSION="2.0.5"
+export UI_MOD_VERSION="2.0.6"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -14,7 +14,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.5}"
+SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.6}"
 
 # ============================================================
 # 顶部横幅
@@ -559,11 +559,17 @@ _ui_argo_menu() {
         echo -e "    ${GREEN}[7]${NC} 安装/更新 cloudflared"
         echo -e "    ${GREEN}[8]${NC} 临时隧道转固定隧道"
         echo ""
-        echo -e "  ${YELLOW}【获取固定隧道 Token】${NC}"
-        echo -e "    1. 访问 https://one.dash.cloudflare.com/"
-        echo -e "    2. Zero Trust → Networks → Tunnels → Create a tunnel"
-        echo -e "    3. 选择 Cloudflared → 复制 Tunnel Token"
-        echo -e "    4. 配置 Public Hostname → http://127.0.0.1:端口"
+        echo -e "  ${YELLOW}【获取固定隧道 Token + Dashboard 配置步骤】${NC}"
+        echo -e "    ${CYAN}①${NC} 访问 ${GREEN}https://one.dash.cloudflare.com/${NC}"
+        echo -e "    ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels → Create a tunnel${NC}"
+        echo -e "    ${CYAN}③${NC} 类型选 ${GREEN}Cloudflared${NC} → 复制 ${GREEN}Tunnel Token${NC}（粘贴到选项 [2]）"
+        echo -e "    ${CYAN}④${NC} 配置 ${GREEN}Public Hostname${NC}（这一步必做，否则小火箭永远超时）:"
+        echo -e "        Subdomain: 你的子域名"
+        echo -e "        Domain:    你的根域名"
+        echo -e "        Type:      ${RED}HTTP${NC} （不要选 HTTPS！）"
+        echo -e "        URL:       ${RED}http://127.0.0.1:端口${NC} （不要写 https、不要写 localhost！）"
+        echo -e "        Path:      ${RED}留空${NC} （不要填任何东西）"
+        echo -e "    ${CYAN}⑤${NC} 保存。脚本部署完后再回 Dashboard 确认 Service 仍是 ${RED}http://127.0.0.1:端口${NC}"
         echo ""
 
         echo -e "    ${YELLOW}[0]${NC} 返回"
@@ -577,7 +583,7 @@ _ui_argo_menu() {
             3) _ui_argo_view_nodes ;;
             4) _ui_argo_delete ;;
             5) _ui_argo_view_log ;;
-            6) _argo_stop_all && read -p "按回车键返回..." ;;
+            6) _ui_argo_stop_all_confirm ;;
             7) _argo_install && read -p "按回车键返回..." ;;
             8) _ui_argo_temp_to_fixed ;;
             0) return ;;
@@ -699,11 +705,27 @@ _ui_argo_add_fixed() {
     _sb_restart_and_verify
 
     echo ""
-    _warn "⚠️ 固定隧道路由由 Cloudflare 云端控制，脚本无法自动设置"
-    _info "添加完成后，请到 Cloudflare Dashboard 配置 (不配置则小火箭会超时):"
-    _info "  Zero Trust → Networks → Tunnels → 选择本隧道 → Public Hostname"
-    _info "  找到域名 ${tunnel_domain} → 编辑 → Service 改为:  http://127.0.0.1:${port}"
-    _info "  (必须是明文 http、127.0.0.1，不能是 https、不能是 localhost)"
+    _warn "╔═══════════════════════════════════════════════════════════╗"
+    _warn "║  ⚠️  必读：固定隧道需要去 Dashboard 配 Service URL  ⚠️    ║"
+    _warn "╚═══════════════════════════════════════════════════════════╝"
+    _info "固定隧道路由由 Cloudflare 云端控制，脚本无法在本地设置"
+    _warn "如果你不做下面这步，小火箭会显示'超时'，隧道永远不通！"
+    echo ""
+    _info "📌 Dashboard 配置步骤（一步一步来，不要漏）:"
+    _info "  ${CYAN}①${NC} 浏览器打开 ${GREEN}https://one.dash.cloudflare.com/${NC}"
+    _info "  ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels${NC}"
+    _info "  ${CYAN}③${NC} 找到隧道名里含 ${YELLOW}${port}${NC} 的那个，点它"
+    _info "  ${CYAN}④${NC} 切到 ${GREEN}Public Hostname${NC} 标签页"
+    _info "  ${CYAN}⑤${NC} 找到域名 ${YELLOW}${tunnel_domain}${NC} 那行，点右侧 ${GREEN}编辑${NC}"
+    _info "  ${CYAN}⑥${NC} Service 这一栏："
+    _info "      Type 改为: ${RED}HTTP${NC}"
+    _info "      URL  改为: ${RED}http://127.0.0.1:${port}${NC}"
+    _info "      ⚠️ http 不能写成 https！"
+    _info "      ⚠️ 127.0.0.1 不能写成 localhost！"
+    _info "      ⚠️ Path 必须留空（不要填任何东西，包括 */blog）"
+    _info "  ${CYAN}⑦${NC} 点 ${GREEN}保存${NC}"
+    echo ""
+    _info "✅ 保存成功后无需重启任何东西，cloudflared 自动 reload，客户端立即可用"
     echo ""
 
     _argo_start_fixed "$port" "$token" || {
@@ -786,6 +808,18 @@ _ui_argo_delete() {
 
     local sel_tag="${tags[$((del_choice - 1))]}"
     local sel_port=$(jq -r ".\"$sel_tag\".local_port" "$ARGO_METADATA_FILE")
+    local sel_name=$(jq -r ".\"$sel_tag\".name" "$ARGO_METADATA_FILE")
+
+    # 二次确认
+    echo ""
+    _warn "将删除节点: ${sel_name} (端口 ${sel_port})"
+    _info "  → 停止 cloudflared 隧道进程"
+    _info "  → 删除 sing-box 入站（${sel_tag}）"
+    _info "  → 从节点列表移除"
+    echo ""
+    local yn=""
+    read -p "确认删除？[y/N]: " yn
+    [[ ! "$yn" =~ ^[Yy]$ ]] && { _info "已取消"; read -p "按回车键返回..."; return; }
 
     # 停止隧道
     _argo_stop "$sel_port"
@@ -799,9 +833,58 @@ _ui_argo_delete() {
     read -p "按回车键返回..."
 }
 
+_ui_argo_stop_all_confirm() {
+    echo ""
+    _warn "将停止所有 Argo 隧道进程（包括 cloudflared）"
+    _info "  → sing-box 入站不会被删除，只停隧道进程"
+    _info "  → 重新启动后可继续使用现有节点"
+    echo ""
+    local yn=""
+    read -p "确认停止所有 Argo 隧道？[y/N]: " yn
+    [[ ! "$yn" =~ ^[Yy]$ ]] && { _info "已取消"; read -p "按回车键返回..."; return; }
+    _argo_stop_all
+    read -p "按回车键返回..."
+}
+
 _ui_argo_view_log() {
     clear
-    _argo_view_log
+    echo -e "${CYAN}=== Argo 隧道日志 ===${NC}"
+    echo ""
+
+    # 列出所有 Argo 节点（含端口）供选择
+    local log_tags=()
+    local log_ports=()
+    local log_types=()
+    while IFS='|' read -r tag name domain port proto atype; do
+        [ -z "$tag" ] && continue
+        log_tags+=("$tag")
+        log_ports+=("$port")
+        log_types+=("$atype")
+        local idx=${#log_tags[@]}
+        local type_label=$([ "$atype" = "fixed" ] && echo "固定" || echo "临时")
+        echo -e "  ${GREEN}[${idx}]${NC} ${name} (${type_label} · 端口 ${port} · ${domain})"
+    done < <(jq -r 'to_entries[] | "\(.key)|\(.value.name)|\(.value.domain)|\(.value.local_port)|\(.value.protocol)|\(.value.type)"' "$ARGO_METADATA_FILE" 2>/dev/null)
+
+    if [ ${#log_tags[@]} -eq 0 ]; then
+        echo "  无 Argo 节点"
+        read -p "按回车键返回..."
+        return
+    fi
+
+    echo ""
+    read -p "选择节点查看日志 [1-${#log_tags[@]}] (0 返回): " log_choice
+
+    [[ ! "$log_choice" =~ ^[0-9]+$ ]] && return
+    [ "$log_choice" -eq 0 ] && return
+    [ "$log_choice" -lt 1 ] || [ "$log_choice" -gt ${#log_tags[@]} ] && { _warn "无效选择"; sleep 1; return; }
+
+    local sel_port="${log_ports[$((log_choice - 1))]}"
+    local sel_type="${log_types[$((log_choice - 1))]}"
+
+    echo ""
+    _argo_view_log "$sel_port"
+    echo ""
+    _info "提示: 实时跟踪日志用 ${YELLOW}journalctl -u argo-tunnel@${sel_port} -f${NC}（${sel_type}隧道 unit 名可能不同）"
     echo ""
     read -p "按回车键返回..."
 }
@@ -848,6 +931,27 @@ _ui_argo_temp_to_fixed() {
     _atomic_modify_json "$ARGO_METADATA_FILE" ".\"$convert_tag\".type = \"fixed\" | .\"$convert_tag\".domain = \"$tunnel_domain\" | .\"$convert_tag\".token = \"$token\""
 
     _success "临时隧道已转换为固定隧道: ${tunnel_domain}"
+    echo ""
+    _warn "╔═══════════════════════════════════════════════════════════╗"
+    _warn "║  ⚠️  必读：固定隧道需要去 Dashboard 配 Service URL  ⚠️    ║"
+    _warn "╚═══════════════════════════════════════════════════════════╝"
+    _info "转换完成 ≠ 立即可用！固定隧道路由由 Cloudflare 云端控制"
+    _warn "如果你不做下面这步，小火箭会显示'超时'，隧道永远不通！"
+    echo ""
+    _info "📌 Dashboard 配置步骤:"
+    _info "  ${CYAN}①${NC} 浏览器打开 ${GREEN}https://one.dash.cloudflare.com/${NC}"
+    _info "  ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels${NC}"
+    _info "  ${CYAN}③${NC} 找到隧道名里含 ${YELLOW}${convert_port}${NC} 的那个，点它"
+    _info "  ${CYAN}④${NC} 切到 ${GREEN}Public Hostname${NC} 标签页"
+    _info "  ${CYAN}⑤${NC} 找到域名 ${YELLOW}${tunnel_domain}${NC} 那行，点右侧 ${GREEN}编辑${NC}"
+    _info "  ${CYAN}⑥${NC} Service 这一栏："
+    _info "      Type 改为: ${RED}HTTP${NC}"
+    _info "      URL  改为: ${RED}http://127.0.0.1:${convert_port}${NC}"
+    _info "      ⚠️ http 不能写成 https！"
+    _info "      ⚠️ 127.0.0.1 不能写成 localhost！"
+    _info "      ⚠️ Path 必须留空"
+    _info "  ${CYAN}⑦${NC} 点 ${GREEN}保存${NC}"
+    echo ""
     read -p "按回车键返回..."
 }
 

@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.5              ║
+  ║              Singbox-Pro   v2.0.6              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -337,6 +337,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
 - **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin
 - **固定隧道必须在 Cloudflare Dashboard 配置 Public Hostname Service**：固定(named)隧道的 ingress 路由由云端控制，脚本无法设置。添加固定隧道后，需到 Dashboard 把对应域名的 Service 设为 `http://127.0.0.1:<端口>`（明文 http、非 localhost），否则小火箭等客户端会超时（CF 侧隧道显示活跃但流量不通）
+- **v2.0.6 升级后需重启 argo-fixed@ 隧道**：v2.0.6 移除了固定隧道 unit 里无效的 `--url` 死参数。新部署会自动生效；**已有固定隧道的用户需手动执行 `systemctl daemon-reload && systemctl restart argo-fixed@<端口>`** 让当前 cloudflared 进程采用新 unit（仅清理，启动方式与之前等价，无功能影响）
 - WARP 域名分流通过 DNS 规则确保 AI 域名走 WARP 通道解析
 - `sb upgrade` 自动备份当前版本到 `.backup.时间戳/`，升级失败自动回滚
 - 安装脚本自动配置 logrotate 日志轮转（Logrotate 未安装时跳过）
@@ -344,6 +345,21 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.0.6 (2026-07-23)
+**清理(Argo 固定隧道)**
+- **去掉无效死参数**：固定隧道 systemd unit（`argo-fixed@.service`）原本带 `--url http://127.0.0.1:%i`，但 named tunnel 模式会忽略该参数（路由 100% 由 Cloudflare 云端 Dashboard 控制），属于误导性死参数。已从 unit 和 `_argo_start_nohup_fixed` 启动命令中移除。
+
+**小白友好强化(Argo 全模块)**
+- **添加固定隧道** / **临时转固定隧道**：完成后给出 7 步详细 Dashboard 引导（带框线警告、颜色标注每一步），小白跟着点也不会漏
+- **查看隧道日志**：之前进入就直接提示"请指定端口"（其实是 bug，UI 层没传 port）。改为先列节点让用户选，再查看对应日志
+- **删除 Argo 节点**：加二次确认 `确认删除？[y/N]`，并显示会同时停 cloudflared + 删 sing-box 入站
+- **停止所有隧道**：加二次确认（之前一键就停所有，危险）
+- **安装/更新 cloudflared**：已安装时显示当前版本号 + 询问 `是否重新安装最新版本？[y/N]`
+- **菜单底部"获取 Token"说明**：从 4 行扩成 5 行详细步骤，明确写 Type/URL/Path 应填什么、不应填什么
+
+**修复(Argo 教程误导)**
+- 之前临时隧道转固定隧道后**完全没有**提示用户去 Dashboard 改 Service URL（最大坑）。现在和"添加固定隧道"一样给出完整 7 步引导
 
 ### v2.0.5 (2026-07-23)
 - **修正(Argo 固定隧道)**: 撤销 v2.0.4 中"本地 `config.yml` 覆盖 Dashboard ingress"的无效实现。经两次实测验证：named tunnel 的 ingress 由 Cloudflare 云端控制，本地 `--config` / credentials 文件均无法覆盖云端配置。固定隧道恢复为 `--token` 直连启动，并在菜单中明确要求用户到 Cloudflare Dashboard 把 Public Hostname 的 Service 设为 `http://127.0.0.1:<端口>`（明文 http、非 localhost），否则客户端超时。

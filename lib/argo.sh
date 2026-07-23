@@ -3,7 +3,7 @@
 # argo.sh — Cloudflare Argo Tunnel 管理模块
 # 支持临时隧道和固定隧道 (Token) 两种模式
 # ============================================================
-export ARGO_MOD_VERSION="2.0.5"
+export ARGO_MOD_VERSION="2.0.6"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -20,8 +20,16 @@ ARGO_METADATA_FILE="${ARGO_METADATA_FILE:-${SINGBOX_DIR}/argo_metadata.json}"
 # --- 安装 cloudflared ---
 _argo_install() {
     if [ -f "$CLOUDFLARED_BIN" ]; then
-        _info "cloudflared 已安装: $($CLOUDFLARED_BIN --version 2>/dev/null | head -1 || echo 'unknown')"
-        return 0
+        local ver=$($CLOUDFLARED_BIN --version 2>/dev/null | head -1 || echo 'unknown')
+        _info "cloudflared 已安装: ${ver}"
+        local ans=""
+        read -p "是否重新安装最新版本？[y/N]: " ans
+        if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+            _info "保持当前版本"
+            return 0
+        fi
+        _info "正在重新下载 cloudflared..."
+        rm -f "$CLOUDFLARED_BIN"
     fi
 
     _info "正在安装 cloudflared..."
@@ -77,7 +85,9 @@ Wants=sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --url http://127.0.0.1:%i --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
+# 注意: 固定(named)隧道路由由 Cloudflare 云端控制，本地 --url 参数会被忽略
+# 必须到 Dashboard 把该域名的 Public Hostname Service 设为 http://127.0.0.1:<端口>
+ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
 Restart=always
 RestartSec=5s
 User=root
@@ -195,7 +205,7 @@ _argo_start_nohup_fixed() {
     local pid_file="/tmp/singbox_argo_fixed_${port}.pid"
     _info "正在启动固定 Argo 隧道 (端口 ${port})..."
     nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
-        --url "http://127.0.0.1:${port}" --token "$token" > "$log_file" 2>&1 &
+        --token "$token" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
     sleep 3
