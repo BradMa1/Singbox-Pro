@@ -3,7 +3,7 @@
 # argo.sh — Cloudflare Argo Tunnel 管理模块
 # 支持临时隧道和固定隧道 (Token) 两种模式
 # ============================================================
-export ARGO_MOD_VERSION="2.0.4"
+export ARGO_MOD_VERSION="2.0.5"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -77,7 +77,7 @@ Wants=sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate --config /usr/local/etc/sing-box/argo/%i.yml run --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
+ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --url http://127.0.0.1:%i --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
 Restart=always
 RestartSec=5s
 User=root
@@ -156,40 +156,26 @@ _argo_start_nohup_temp() {
 }
 
 # --- 启动固定隧道 (Token 模式) ---
-# 注: named tunnel 会忽略 --url，路由由 ingress 决定。脚本自带本地 config.yml
-#     写死 ingress (http://127.0.0.1:端口 + 域名)，覆盖 CF Dashboard 默认配置，
-#     用户无需手动在 Dashboard 修改 Public Hostname 的 Service URL。
+# 注: 固定(named)隧道的 ingress 路由由 Cloudflare 云端控制，本地 config.yml 无法覆盖。
+#     添加隧道后，必须在 Cloudflare Dashboard 把该域名的 Public Hostname Service 设为
+#     http://127.0.0.1:<端口> (明文 http，非 https；127.0.0.1 非 localhost)，否则客户端超时。
 _argo_start_fixed() {
-    local port="$1" token="$2" domain="$3"
+    local port="$1" token="$2"
     if [ "$INIT_SYSTEM" = "systemd" ]; then
-        _argo_start_systemd_fixed "$port" "$token" "$domain"
+        _argo_start_systemd_fixed "$port" "$token"
     else
-        _argo_start_nohup_fixed "$port" "$token" "$domain"
+        _argo_start_nohup_fixed "$port" "$token"
     fi
 }
 
-# --- 生成固定隧道本地 ingress 配置 (覆盖 CF Dashboard 默认) ---
-_argo_write_fixed_config() {
-    local port="$1" domain="$2"
-    [ -z "$domain" ] && return 0
-    mkdir -p "${SINGBOX_DIR}/argo"
-    chmod 700 "${SINGBOX_DIR}/argo"
-    cat > "${SINGBOX_DIR}/argo/${port}.yml" <<EOF
-ingress:
-  - hostname: ${domain}
-    service: http://127.0.0.1:${port}
-  - service: http_status:404
-EOF
-    _info "已写入固定隧道 ingress 配置: ${SINGBOX_DIR}/argo/${port}.yml (覆盖 CF Dashboard 默认 Service URL)"
-}
+# (固定隧道的 ingress 由 Cloudflare 云端控制，本地无法覆盖，故不在此生成 config.yml)
 
 _argo_start_systemd_fixed() {
-    local port="$1" token="$2" domain="$3"
+    local port="$1" token="$2"
     mkdir -p "${SINGBOX_DIR}/argo"
     chmod 700 "${SINGBOX_DIR}/argo"
     printf '%s' "$token" > "${SINGBOX_DIR}/argo/${port}.token"
     chmod 600 "${SINGBOX_DIR}/argo/${port}.token"
-    [ -n "$domain" ] && _argo_write_fixed_config "$port" "$domain"
     _argo_ensure_service_template
     _info "正在启动固定 Argo 隧道 (端口 ${port})..."
     systemctl daemon-reload 2>/dev/null || true
@@ -204,14 +190,12 @@ _argo_start_systemd_fixed() {
 }
 
 _argo_start_nohup_fixed() {
-    local port="$1" token="$2" domain="$3"
+    local port="$1" token="$2"
     local log_file="/tmp/singbox_argo_fixed_${port}.log"
     local pid_file="/tmp/singbox_argo_fixed_${port}.pid"
-    [ -n "$domain" ] && _argo_write_fixed_config "$port" "$domain"
     _info "正在启动固定 Argo 隧道 (端口 ${port})..."
-    local cf_args=(tunnel --no-autoupdate run --token "$token")
-    [ -n "$domain" ] && cf_args+=(--config "${SINGBOX_DIR}/argo/${port}.yml")
-    nohup "$CLOUDFLARED_BIN" "${cf_args[@]}" > "$log_file" 2>&1 &
+    nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
+        --url "http://127.0.0.1:${port}" --token "$token" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
     sleep 3

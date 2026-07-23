@@ -12,7 +12,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.4"
+export SCRIPT_VERSION="2.0.5"
 export SCRIPT_NAME="Singbox-Pro"
 # SB_VERSION 定义在 core.sh（SSOT），加载模块后自动获取
 

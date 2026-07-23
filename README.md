@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.4              ║
+  ║              Singbox-Pro   v2.0.5              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -336,6 +336,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - **TUIC v5 分享链接已含 `version=5`**，客户端（小火箭 / v2rayN 等）会直接按 v5 解析，无需手动重设
 - **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
 - **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin
+- **固定隧道必须在 Cloudflare Dashboard 配置 Public Hostname Service**：固定(named)隧道的 ingress 路由由云端控制，脚本无法设置。添加固定隧道后，需到 Dashboard 把对应域名的 Service 设为 `http://127.0.0.1:<端口>`（明文 http、非 localhost），否则小火箭等客户端会超时（CF 侧隧道显示活跃但流量不通）
 - WARP 域名分流通过 DNS 规则确保 AI 域名走 WARP 通道解析
 - `sb upgrade` 自动备份当前版本到 `.backup.时间戳/`，升级失败自动回滚
 - 安装脚本自动配置 logrotate 日志轮转（Logrotate 未安装时跳过）
@@ -344,9 +345,12 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.0.5 (2026-07-23)
+- **修正(Argo 固定隧道)**: 撤销 v2.0.4 中"本地 `config.yml` 覆盖 Dashboard ingress"的无效实现。经两次实测验证：named tunnel 的 ingress 由 Cloudflare 云端控制，本地 `--config` / credentials 文件均无法覆盖云端配置。固定隧道恢复为 `--token` 直连启动，并在菜单中明确要求用户到 Cloudflare Dashboard 把 Public Hostname 的 Service 设为 `http://127.0.0.1:<端口>`（明文 http、非 localhost），否则客户端超时。
+
 ### v2.0.4 (2026-07-23)
-- **修复(Argo 固定隧道)**: 固定隧道启动改为脚本自带本地 `config.yml` 写死 ingress（`http://127.0.0.1:端口` + 域名），用 `--config` 加载，**覆盖 CF Dashboard 默认 Service URL**（`https://localhost:端口`）。用户不再需要手动在 Dashboard 修改 Public Hostname 路由，加任意端口/域名的固定隧道都自动对齐。
-- **修复**: 固定隧道添加/转换时透传域名给启动函数（之前漏传 `tunnel_domain`，导致本地 ingress 配置无法生成）。
+- **修复**: 固定隧道添加/转换时透传域名给启动函数（之前漏传 `tunnel_domain`）。
+- ⚠️ 注: 本版本曾尝试用本地 `config.yml` 覆盖 CF Dashboard 的 ingress，实测对 named tunnel 无效（云端 ingress 优先级高于本地配置），已在 v2.0.5 撤销。固定隧道仍须在 Dashboard 手动设置 Public Hostname Service 为 `http://127.0.0.1:<端口>`。
 
 ### v2.0.3 (2026-07-23)
 
