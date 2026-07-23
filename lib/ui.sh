@@ -563,7 +563,7 @@ _ui_argo_menu() {
         echo -e "    1. 访问 https://one.dash.cloudflare.com/"
         echo -e "    2. Zero Trust → Networks → Tunnels → Create a tunnel"
         echo -e "    3. 选择 Cloudflared → 复制 Tunnel Token"
-        echo -e "    4. 配置 Public Hostname → http://localhost:端口"
+        echo -e "    4. 配置 Public Hostname → http://127.0.0.1:端口"
         echo ""
 
         echo -e "    ${YELLOW}[0]${NC} 返回"
@@ -701,7 +701,7 @@ _ui_argo_add_fixed() {
     echo ""
     _info "请确认已在 Cloudflare Dashboard 配置:"
     _info "  Public Hostname: ${tunnel_domain}"
-    _info "  Service: http://localhost:${port}"
+    _info "  Service: http://127.0.0.1:${port}"
     echo ""
     read -p "确认无误后按回车键继续..."
 

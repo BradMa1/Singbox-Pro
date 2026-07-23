@@ -52,8 +52,8 @@ _argo_install() {
 # 重启 VPS 后由 systemd 自动拉起（Restart=always）。
 _argo_ensure_service_template() {
     [ "$INIT_SYSTEM" = "systemd" ] || return 0
-    if [ ! -f /etc/systemd/system/argo-tunnel@.service ]; then
-        cat > /etc/systemd/system/argo-tunnel@.service <<'EOF'
+    # 注意: 此 unit 为脚本自动生成，不保留用户自定义内容，每次都重写以确保修复（如 origin 地址）生效
+    cat > /etc/systemd/system/argo-tunnel@.service <<'EOF'
 [Unit]
 Description=Argo Tunnel (port %i)
 After=network.target sing-box.service
@@ -61,7 +61,7 @@ Wants=sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://localhost:%i
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:%i
 Restart=always
 RestartSec=5s
 User=root
@@ -69,9 +69,7 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-    fi
-    if [ ! -f /etc/systemd/system/argo-fixed@.service ]; then
-        cat > /etc/systemd/system/argo-fixed@.service <<'EOF'
+    cat > /etc/systemd/system/argo-fixed@.service <<'EOF'
 [Unit]
 Description=Argo Fixed Tunnel (port %i)
 After=network.target sing-box.service
@@ -79,7 +77,7 @@ Wants=sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --url http://localhost:%i --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
+ExecStart=/bin/sh -c '/usr/local/bin/cloudflared tunnel --no-autoupdate run --url http://127.0.0.1:%i --token "$(cat /usr/local/etc/sing-box/argo/%i.token 2>/dev/null)"'
 Restart=always
 RestartSec=5s
 User=root
@@ -87,7 +85,6 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-    fi
 }
 
 # --- 启动临时隧道 ---
@@ -131,7 +128,7 @@ _argo_start_nohup_temp() {
     local log_file="/tmp/singbox_argo_${port}.log"
     local pid_file="/tmp/singbox_argo_${port}.pid"
     _info "正在启动临时 Argo 隧道 (端口 ${port})..."
-    nohup "$CLOUDFLARED_BIN" tunnel --url "http://localhost:${port}" \
+    nohup "$CLOUDFLARED_BIN" tunnel --url "http://127.0.0.1:${port}" \
         --no-autoupdate > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
@@ -184,7 +181,7 @@ _argo_start_systemd_fixed() {
         return 0
     fi
     _error "固定隧道启动失败，请查看日志: journalctl -u argo-fixed@${port}"
-    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://localhost:${port}"
+    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://127.0.0.1:${port}"
     return 1
 }
 
@@ -195,7 +192,7 @@ _argo_start_nohup_fixed() {
     _info "正在启动固定 Argo 隧道 (端口 ${port})..."
     nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
         --token "$token" \
-        --url "http://localhost:${port}" > "$log_file" 2>&1 &
+        --url "http://127.0.0.1:${port}" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
     sleep 3
@@ -204,7 +201,7 @@ _argo_start_nohup_fixed() {
         return 0
     fi
     _error "固定隧道启动失败，请查看日志: $log_file"
-    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://localhost:${port}"
+    _error "请确认已在 Cloudflare Dashboard 配置 Public Hostname → http://127.0.0.1:${port}"
     rm -f "$pid_file"
     return 1
 }
@@ -226,7 +223,7 @@ _argo_stop() {
             rm -f "$pid_file"
         fi
     done
-    pkill -f "cloudflared.*localhost:${port}" 2>/dev/null || true
+    pkill -f "cloudflared.*:${port}" 2>/dev/null || true
 }
 
 # --- 停止所有隧道 ---

@@ -149,7 +149,7 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
 }
 
 # ============================================================
