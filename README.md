@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.2              ║
+  ║              Singbox-Pro   v2.0.3              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -333,6 +333,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - 中转 Token 生成时自动读取落地机 metadata.json 获取 `public_key`
 - VMess WebSocket 使用自签证书加密，客户端需跳过证书验证
 - AnyTLS / Hysteria2 / TUIC 使用自签证书，URI 已含 `insecure=1`
+- **TUIC v5 分享链接已含 `version=5`**，客户端（小火箭 / v2rayN 等）会直接按 v5 解析，无需手动重设
+- **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
+- **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin
 - WARP 域名分流通过 DNS 规则确保 AI 域名走 WARP 通道解析
 - `sb upgrade` 自动备份当前版本到 `.backup.时间戳/`，升级失败自动回滚
 - 安装脚本自动配置 logrotate 日志轮转（Logrotate 未安装时跳过）
@@ -340,6 +343,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.0.3 (2026-07-23)
+
+**修复**
+- **TUIC v5 分享链接**：生成的 `tuic://` 链接补充 `version=5` 参数。此前缺该参数导致小火箭 / v2rayN 等客户端默认按 v4 解析，需手动重设才能用。服务端 sing-box 始终跑 v5，本次仅修正分享链接字段。
+- **Argo 隧道超时**：cloudflared 原 `--url` 使用 `localhost`，而 sing-box 的 Argo 入站监听 `127.0.0.1`。部分 VPS 上 `localhost` 优先解析为 IPv6 `::1`，导致 cloudflared 连不上本地 origin —— 表现为 Cloudflare 侧隧道「活跃」，但代理请求全部超时。已将全部 `--url` 改为 `127.0.0.1`，并修正兜底 `pkill` 匹配规则。
+
+**注意**
+- Argo 隧道由脚本自动生成 systemd unit（`if-not-exist` 守卫已移除，改为每次重写），因此 `sb upgrade` 或重跑 Argo 菜单后会自动采用新 origin 地址；**已在运行的旧隧道需手动重启**（见下方「注意事项」）。
 
 ### v2.0.2 (2026-07-16)
 

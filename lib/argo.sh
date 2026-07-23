@@ -3,7 +3,7 @@
 # argo.sh — Cloudflare Argo Tunnel 管理模块
 # 支持临时隧道和固定隧道 (Token) 两种模式
 # ============================================================
-export ARGO_MOD_VERSION="2.0.2"
+export ARGO_MOD_VERSION="2.0.3"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then

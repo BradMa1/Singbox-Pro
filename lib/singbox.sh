@@ -3,7 +3,7 @@
 # singbox.sh — Sing-box 核心安装/配置/服务管理模块
 # 可被 sb.sh source 加载，也可独立运行
 # ============================================================
-export SINGBOX_MOD_VERSION="2.0.2"
+export SINGBOX_MOD_VERSION="2.0.3"
 
 # --- 路径定义 ---
 SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
@@ -176,7 +176,7 @@ SBEOF
 
 # --- 写入元数据 ---
 _sb_init_metadata() {
-    local ver="${SCRIPT_VERSION:-2.0.2}"
+    local ver="${SCRIPT_VERSION:-2.0.3}"
     if [ ! -f "$METADATA_FILE" ]; then
         jq -n --arg v "$ver" '{
             version: $v,

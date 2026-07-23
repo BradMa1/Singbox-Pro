@@ -3,7 +3,7 @@
 # protocols.sh — Singbox-Pro 5协议处理模块
 # VLESS Reality / AnyTLS / TUIC V5 / Hysteria2 / VMess WebSocket
 # ============================================================
-export PROTO_MOD_VERSION="2.0.0"
+export PROTO_MOD_VERSION="2.0.3"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then

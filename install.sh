@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.2"
+export SCRIPT_VERSION="2.0.3"
 # SB_VERSION 由 lib/core.sh 统一定义（SSOT），安装阶段在下载模块后从中读取
 
 # --- 颜色 ---
@@ -332,7 +332,7 @@ _step_config() {
 }
 CONFEOF
         cat > "${SINGBOX_DIR}/metadata.json" << 'CONFEOF'
-{"version": "2.0.2", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
+{"version": "2.0.3", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
 CONFEOF
         _ok "配置文件已生成（极简模式）"
     fi

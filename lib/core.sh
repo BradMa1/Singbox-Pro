@@ -3,7 +3,7 @@
 # core.sh — Singbox-Pro 核心工具模块
 # 被 sb.sh source 加载，也可独立运行进行环境检测
 # ============================================================
-export CORE_VERSION="2.0.2"
+export CORE_VERSION="2.0.3"
 
 # --- 颜色定义 ---
 if [ -z "${RED:-}" ]; then
