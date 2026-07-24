@@ -331,8 +331,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 - VLESS Reality outbound 自动配置 `utls: chrome` 指纹（sing-box 要求）
 - 中转 Token 生成时自动读取落地机 metadata.json 获取 `public_key`
-- VMess WebSocket 现已真正启用 TLS（服务端自签证书）+ 证书固定：分享输出为**完整 Xray 配置 JSON**（含 `tlsSettings.pinnedPeerCertificateChainSha256`），可直接粘贴到 v2rayN / v2rayNG / NekoBox「从剪贴板导入」，无需 `allowInsecure`。原 `vmess://base64` 链接无法携带证书指纹，故改用完整配置。Clash 系（FlClash/Stash）对自签证书仍用 `skip-cert-verify: true`（Clash 尚未弃用），或直接用 VLESS-Reality 节点（无需证书）
-- AnyTLS / Hysteria2 / TUIC 使用自签证书，URI 现在**自动注入证书 SHA-256 指纹**（`pinned_cert_sha256` / `pinnedcertsha256`，由脚本读取 VPS 上 `${SINGBOX_DIR}/cert.pem` 计算），客户端据此固定验证，**不再需要 `allowInsecure` / `insecure=1`**。规避 Xray 2026-08-01 禁用 `allowInsecure` 的限制（届时未固定证书的节点将拒连）。改完脚本后，在 `sb` 里「查看节点列表」重新复制链接、重导客户端即可生效（无需重新添加节点）
+- VMess WebSocket 现已真正启用 TLS（服务端自签证书）+ 证书固定。**同时输出两种分享格式**：① 完整 Xray 配置 JSON（含 `tlsSettings.pinnedPeerCertificateChainSha256`），粘贴到 v2rayN / v2rayNG / NekoBox「从剪贴板导入」，无需 `allowInsecure`，8.1 安全；② 标准 `vmess://base64` 链接（含 `tls` 字段），可导入**小火箭 / 通用客户端**，但标准格式无法携带证书指纹，自签证书需在客户端手动勾选「允许不安全」（小火箭仍支持 `allowInsecure`，不在 8.1 弃用名单）。Clash 系（FlClash/Stash）对自签证书仍用 `skip-cert-verify: true`，或直接用 VLESS-Reality 节点（无需证书）
+- AnyTLS / Hysteria2 / TUIC 使用自签证书，URI 现在**自动注入证书 SHA-256 指纹**（`pinned_cert_sha256`，由脚本读取 VPS 上 `${SINGBOX_DIR}/cert.pem` 计算），客户端据此固定验证，**不再需要 `allowInsecure` / `insecure=1`**。其中 **Hysteria2 同时注入 `pinnedcertsha256`（Xray 系）与 `pinned_cert_sha256`（小火箭 / Clash.Meta）两个字段**，一套链接 Xray 与小火箭通用；AnyTLS / TUIC 直接用 `pinned_cert_sha256`（两端通用）。规避 Xray 2026-08-01 禁用 `allowInsecure` 的限制（届时未固定证书的节点将拒连）。改完脚本后，在 `sb` 里「查看节点列表」重新复制链接、重导客户端即可生效（无需重新添加节点）
 - **TUIC v5 分享链接已含 `version=5`**，客户端（小火箭 / v2rayN 等）会直接按 v5 解析，无需手动重设
 - **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
 - **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin

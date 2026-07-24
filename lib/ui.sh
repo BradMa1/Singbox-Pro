@@ -347,11 +347,14 @@ _ui_add_node_menu() {
                 echo ""
                 ;;
             vmess)
-                local uri=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+                local std=$(_proto_vmess_ws_standard_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+                local full=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
                 echo -e "  ${GREEN}● ${name}${NC} (VMess WS)"
                 echo -e "    端口: ${port}  路径: ${ws_path}"
-                echo -e "    ${GREEN}${uri}${NC}"
-                echo -e "    ${YELLOW}↑ 完整 Xray 配置, 复制整段粘贴到 v2rayN「设置 → 从剪贴板导入」${NC}"
+                echo -e "    ${GREEN}${std}${NC}"
+                echo -e "    ${CYAN}↑ 标准 vmess:// — 导入小火箭 / 通用客户端 (自签需在客户端勾选「允许不安全」)${NC}"
+                echo -e "    ${GREEN}${full}${NC}"
+                echo -e "    ${YELLOW}↑ 完整 Xray 配置 — 复制整段粘贴到 v2rayN「设置 → 从剪贴板导入」(已固定证书, 8.1 安全)${NC}"
                 echo ""
                 ;;
         esac
@@ -1331,8 +1334,11 @@ _ui_view_nodes() {
             vmess)
                 local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
                 local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
-                local uri=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
-                echo -e "      链接: ${GREEN}${uri}${NC}"
+                local std=$(_proto_vmess_ws_standard_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+                local full=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+                echo -e "      标准 vmess:// (小火箭): ${GREEN}${std}${NC}"
+                echo -e "      完整 Xray 配置 (v2rayN): ${GREEN}${full}${NC}"
+                echo -e "      ${YELLOW}小火箭需勾选「允许不安全」${NC}"
                 ;;
         esac
         echo ""

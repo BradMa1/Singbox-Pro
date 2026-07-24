@@ -204,7 +204,9 @@ _proto_hy2_uri() {
     local ep=$(_url_encode "$name")
     local fp=$(_cert_sha256)
     if [ -n "$fp" ]; then
-        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}#${ep}"
+        # 双字段: pinnedcertsha256(Xray 系) + pinned_cert_sha256(小火箭/Clash.Meta)
+        # 两者值相同, 客户端各取所需, 一套链接 Xray 与小火箭都通用
+        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}&pinned_cert_sha256=${fp}#${ep}"
     else
         echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
     fi
@@ -286,6 +288,41 @@ _proto_vmess_ws_uri() {
                 }
             }]
         }'
+}
+
+_proto_vmess_ws_standard_uri() {
+    # 标准 vmess:// 分享链接 (base64 json), 小火箭 / v2rayN 标准导入均支持
+    # 注意: 标准格式无法携带证书指纹, 自签证书需客户端手动「允许不安全」
+    # (小火箭仍支持 allowInsecure, 不在 8.1 弃用名单; v2rayN 仅作备选导入)
+    local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
+    local name="$5"
+    local vmess_json=$(jq -nc \
+        --arg v "2" \
+        --arg ps "$name" \
+        --arg add "$server_ip" \
+        --arg port "$port" \
+        --arg id "$uuid" \
+        --arg path "$ws_path" \
+        --arg tls "tls" \
+        --arg sni "$server_ip" \
+        '{
+            v: $v,
+            ps: $ps,
+            add: $add,
+            port: $port,
+            id: $id,
+            aid: "0",
+            scy: "auto",
+            net: "ws",
+            type: "none",
+            host: "",
+            path: $path,
+            tls: $tls,
+            sni: $sni,
+            alpn: ""
+        }')
+    local b64=$(echo -n "$vmess_json" | base64 | tr -d '\n\r ')
+    echo -n "vmess://${b64}"
 }
 
 # ============================================================
