@@ -113,7 +113,12 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
+    local fp=$(_cert_sha256)
+    if [ -n "$fp" ]; then
+        echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp}#${ep}"
+    else
+        echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
+    fi
 }
 
 # ============================================================
@@ -149,7 +154,12 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    local fp=$(_cert_sha256)
+    if [ -n "$fp" ]; then
+        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp}#${ep}"
+    else
+        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    fi
 }
 
 # ============================================================
@@ -192,7 +202,12 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
+    local fp=$(_cert_sha256)
+    if [ -n "$fp" ]; then
+        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}#${ep}"
+    else
+        echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
+    fi
 }
 
 # ============================================================
@@ -216,6 +231,10 @@ _proto_vmess_ws_config() {
             "alterId": 0
         }
     ],
+    "tls": {
+        "certificate_path": "${SINGBOX_DIR}/cert.pem",
+        "key_path": "${SINGBOX_DIR}/key.pem"
+    },
     "transport": {
         "type": "ws",
         "path": "${ws_path}",
@@ -229,39 +248,44 @@ EOF
 _proto_vmess_ws_uri() {
     local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
     local name="$5"
-    local ep=$(_url_encode "$name")
+    local fp=$(_cert_sha256)
 
-    # VMess 分享格式: vmess://base64(json)
-    local vmess_json=$(jq -n \
-        --arg v "2" \
-        --arg ps "$name" \
-        --arg add "$server_ip" \
+    # VMess 标准 vmess:// 链接 (base64 json) 无法携带证书指纹, 故输出可直导入
+    # v2rayN / v2rayNG / NekoBox 的完整 Xray outbound 配置:
+    #   - security=tls 启用 TLS (服务端已配自签证书)
+    #   - tlsSettings.pinnedPeerCertificateChainSha256 固定证书, 无需 allowInsecure
+    #   - Xray 2026-08-01 禁用 allowInsecure 后, 此配置仍可正常连接
+    # 导入方式: 复制下面整段 JSON → v2rayN「设置 → 从剪贴板导入」
+    jq -nc \
+        --arg addr "$server_ip" \
         --arg port "$port" \
         --arg id "$uuid" \
         --arg path "$ws_path" \
-        --arg net "ws" \
-        --arg type "none" \
-        --arg host "" \
-        --arg tls "" \
+        --arg sni "$server_ip" \
+        --arg fp "$fp" \
         '{
-            v: $v,
-            ps: $ps,
-            add: $add,
-            port: $port,
-            id: $id,
-            aid: "0",
-            scy: "auto",
-            net: $net,
-            type: $type,
-            host: $host,
-            path: $path,
-            tls: $tls,
-            sni: "",
-            alpn: ""
-        }')
-
-    local b64=$(echo -n "$vmess_json" | base64 | tr -d '\n\r ')
-    echo -n "vmess://${b64}"
+            outbounds: [{
+                protocol: "vmess",
+                tag: "proxy",
+                settings: {
+                    vnext: [{
+                        address: $addr,
+                        port: ($port|tonumber),
+                        users: [{ id: $id, alterId: 0, security: "auto" }]
+                    }]
+                },
+                streamSettings: {
+                    network: "ws",
+                    wsSettings: { path: $path, headers: {} },
+                    security: "tls",
+                    tlsSettings: {
+                        serverName: $sni,
+                        pinnedPeerCertificateChainSha256: $fp,
+                        allowInsecure: false
+                    }
+                }
+            }]
+        }'
 }
 
 # ============================================================
@@ -288,6 +312,19 @@ _proto_generate_cert() {
 
     _error "证书生成失败，请检查 openssl 是否安装"
     return 1
+}
+
+_cert_sha256() {
+    # 计算 TLS 证书 SHA-256 指纹, 供客户端 pinned 验证用 (小写 hex, 无冒号)
+    # Xray:  TUIC/AnyTLS 用 pinned_cert_sha256, Hysteria2 用 pinnedcertsha256,
+    #        VMess 用 tlsSettings.pinnedPeerCertificateChainSha256
+    # Clash: pinned_cert_sha256
+    # 注意: 各客户端均要求 64 位小写 hex (无冒号), openssl 默认输出带冒号, 故此处去除
+    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
+    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
+    [ -f "$cert" ] || { echo ""; return 1; }
+    openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
+        | sed 's/^SHA256 Fingerprint=//; s/://g; y/ABCDEF/abcdef/'
 }
 
 # ============================================================

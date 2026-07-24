@@ -217,10 +217,10 @@ _ui_add_node_menu() {
     done
     [ ${#selected[@]} -eq 0 ] && return
 
-    # ===== 证书预生成 (AnyTLS/TUIC/Hy2 需要) =====
+    # ===== 证书预生成 (AnyTLS/TUIC/Hy2/VMess 需要) =====
     local need_cert=false
     for ch in "${selected[@]}"; do
-        case $ch in 2|3|4) need_cert=true; break ;; esac
+        case $ch in 2|3|4|5) need_cert=true; break ;; esac
     done
     if $need_cert; then
         _proto_generate_cert || { read -p "按回车键返回..."; return; }
@@ -351,6 +351,7 @@ _ui_add_node_menu() {
                 echo -e "  ${GREEN}● ${name}${NC} (VMess WS)"
                 echo -e "    端口: ${port}  路径: ${ws_path}"
                 echo -e "    ${GREEN}${uri}${NC}"
+                echo -e "    ${YELLOW}↑ 完整 Xray 配置, 复制整段粘贴到 v2rayN「设置 → 从剪贴板导入」${NC}"
                 echo ""
                 ;;
         esac
