@@ -103,12 +103,12 @@ _sb_generate_config() {
             {
                 "type": "udp",
                 "tag": "dns-local",
-                "address": "223.5.5.5"
+                "server": "223.5.5.5"
             },
             {
                 "type": "udp",
                 "tag": "dns-remote",
-                "address": "8.8.8.8"
+                "server": "8.8.8.8"
             }
         ],
         "rules": [
@@ -443,7 +443,7 @@ _streaming_dns_set() {
     fi
 
     # 添加新的流媒体 DNS
-    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","type":"udp","address":"'"$addr"'","detour":"proxy"}]'
+    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","type":"udp","server":"'"$addr"'","detour":"proxy"}]'
     _atomic_modify_json "$CONFIG_FILE" '.dns.rules += [{
         "domain_suffix": [
             "netflix.com", "nflxvideo.net", "nflxext.com",
