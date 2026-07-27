@@ -1282,13 +1282,13 @@ _ui_view_nodes() {
     clear
     echo -e "${CYAN}=== 查看节点链接 ===${NC}"
     echo ""
-    # 客户端使用提示: 证书已内置公钥指纹固定(pinned), 无需跳过证书验证; v2rayN 必须选 sing_box
-    # sing-box 1.13+ 固定字段为 certificate_public_key_sha256(公钥哈希), Xray 8/1 禁用 allowInsecure 后仍能连
+    # 客户端使用提示: AnyTLS/TUIC/H2 链接用 insecure 跳过验证(sing-box 内核合法, 不受 8/1 影响);
+    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(pinned); v2rayN 必须选 sing_box
     echo -e "${YELLOW}客户端导入提醒:${NC}"
-    echo -e "  ${YELLOW}1.${NC} 证书已内置「公钥指纹固定」(sing-box 1.13+), 客户端${GREEN}无需${NC}勾选「跳过证书验证」, Xray 8/1 禁用 allowInsecure 后仍能连"
+    echo -e "  ${YELLOW}1.${NC} AnyTLS / TUIC / Hysteria2 链接已用 ${GREEN}insecure${NC} 跳过自签证书验证 —— 这是 sing-box 内核(tls.insecure)的合法行为, ${GREEN}不受 Xray 8/1 禁用 allowInsecure 的影响${NC}"
     echo -e "  ${YELLOW}2.${NC} v2rayN: 节点「${YELLOW}配置项${NC}」必须选 ${YELLOW}sing_box${NC} (选 xray/留空, AnyTLS 等节点连不通 — Xray 不支持 AnyTLS 出站)"
-    echo -e "  ${YELLOW}3.${NC} VLESS-Reality 用 pbk 公钥体系, 不受证书影响"
-    echo -e "  ${YELLOW}4.${NC} Shadowrocket / 纯 Xray 客户端: 请改用 sing-box 内核客户端(NekoBox/Hiddify/SFA); 或 Shadowrocket 保留「跳过证书验证」(它非 Xray, 8/1 不受影响)"
+    echo -e "  ${YELLOW}3.${NC} VLESS-Reality 用 pbk 公钥体系, 免证书验证, 任何内核/8/1 后都通"
+    echo -e "  ${YELLOW}4.${NC} 纯 Xray 客户端(v2rayNG 等): 请用 VLESS-Reality / VMess(已带证书哈希固定), 不要依赖 insecure(8/1 后 Xray 会拒)"
     echo ""
 
     local server_ip=$(_get_public_ip)

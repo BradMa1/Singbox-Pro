@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.7              ║
+  ║              Singbox-Pro   v2.0.8              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -332,8 +332,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - VLESS Reality outbound 自动配置 `utls: chrome` 指纹（sing-box 要求）
 - 中转 Token 生成时自动读取落地机 metadata.json 获取 `public_key`
 - VMess WebSocket 使用服务端自签证书。**同时输出两种分享格式**：① 完整 Xray 配置 JSON（用 `pinnedPeerCertificateChainSha256` 证书固定，`allowInsecure: false`，无需跳过证书验证，Xray 8/1 禁用 allowInsecure 后仍可连），粘贴到 v2rayN / v2rayNG / NekoBox「从剪贴板导入」；② 标准 `vmess://base64` 链接（含 `tls` 字段，无法携带指纹），可导入**小火箭 / 通用客户端**，小火箭需保留「跳过证书验证」（它非 Xray，8/1 不受影响）。Clash 系（FlClash/Stash）对自签证书使用 `skip-cert-verify: true`
-- AnyTLS / Hysteria2 / TUIC 使用服务端自签证书，URI 自动带 `pinned_cert_sha256=<公钥哈希>`（sing-box 1.13+ 的 `certificate_public_key_sha256` **公钥哈希**固定，不是旧版的证书哈希）。客户端**无需勾选「跳过证书验证」**，且 Xray 8/1 禁用 allowInsecure 后仍能正常连接。`insecure=1` 作为非 sing-box 内核（Shadowrocket/Clash）的兜底保留。注意：v2rayN 必须将「配置项」选为 `sing_box`（见下条）—— Xray 内核把链接里的 `pinned_cert_sha256` 当成证书哈希，与 sing-box 的公钥哈希语义不同，选 xray 模式会连不通
-- **v2rayN 必须将节点的「配置项」下拉框选为 `sing_box`**（选 `xray` 或留空都会连不通）。原因：v2rayN 内置 Xray 26.4.17 不支持 AnyTLS 出站、对 TUIC / Hysteria2 的 pinned 字段支持也不全；切到 sing_box 内核处理这些协议即正常。**VLESS-Reality 节点无此限制**（任何内核都支持）
+- AnyTLS / Hysteria2 / TUIC 使用服务端自签证书，URI 统一用 `insecure=1` / `allow_insecure=1` 跳过验证。这是 **sing-box 内核（`tls.insecure` 字段）的合法行为，不受 Xray 8/1 禁用 `allowInsecure` 的影响**——主力客户端 v2rayN 选 `sing_box` 模式即走 sing-box 内核，可安心使用。`pinned_cert_sha256` 字段因 sing-box / Xray 两系语义分裂（公钥哈希 vs 证书哈希）且在 v2rayN 等客户端解析时语义不确定，已弃用，避免连不通。纯 Xray 客户端请改用 VLESS-Reality（免验证）/ VMess（证书哈希固定），不要依赖 insecure
+- **v2rayN 必须将节点的「配置项」下拉框选为 `sing_box`**（选 `xray` 或留空都会连不通）。原因：v2rayN 内置 Xray 不支持 AnyTLS 出站；切到 sing_box 内核处理这些协议即正常。**VLESS-Reality 节点无此限制**（任何内核都支持）
 - **TUIC v5 分享链接已含 `version=5`**，客户端（小火箭 / v2rayN 等）会直接按 v5 解析，无需手动重设
 - **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
 - **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin
@@ -347,12 +347,16 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
-### v2.0.7 (2026-07-27)
-**修复(证书固定 / 8-1 兼容) — 重大**
-- **根因**：sing-box 1.13.0 起把客户端证书固定字段从 `pinned_cert_sha256` 改名为 `certificate_public_key_sha256`，且哈希对象从「整张证书」改为「证书**公钥**(SPKI)」。旧字段在 1.13.x 已被彻底移除（`unknown field`）；用证书哈希会被拒绝/握手失败。之前 pin 不通的真正原因不是客户端模式，而是给错了哈希类型。
-- **修正**：AnyTLS / TUIC / Hysteria2 链接的 `pinned_cert_sha256=` 改为填「公钥 SHA-256 的 base64」（官方算法：`openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64`）。VMess 走 Xray 的 `pinnedPeerCertificateChainSha256`（证书哈希 hex）。均已本地用 sing-box 1.13.14 真机握手验证（公钥哈希 HTTP 200 成功；证书哈希 HTTP 000 失败）。
-- **效果**：客户端**无需勾选「跳过证书验证」**，且 Xray 计划 2026-08-01 禁用 `allowInsecure` 后仍能正常连接。`insecure=1` 仅作为 Shadowrocket/Clash 等非 sing-box 内核的兜底保留。
-- **客户端要求**：v2rayN 节点「配置项」必须选 `sing_box`（Xray 内核把链接里的 `pinned_cert_sha256` 当成证书哈希，与 sing-box 公钥哈希语义不同，xray 模式必连不通；且 Xray 不支持 AnyTLS 出站）。Shadowrocket 非 Xray，8-1 不受影响，可保留「跳过证书验证」或改用 sing-box 内核客户端（NekoBox/Hiddify/SFA）。
+### v2.0.8 (2026-07-27)
+**翻转(share link 证书策略) — 重大**
+- **结论**：AnyTLS / TUIC / Hysteria2 分享链接**统一改用 `insecure=1` / `allow_insecure=1` 跳过验证**，不再使用 `pinned_cert_sha256`。
+- **为何翻转**：v2.0.7 的 pinned 方案（填公钥哈希）在配置层实测能连（sing-box 1.13.14 真机 HTTP 200），但 share link 经 v2rayN 等客户端解析时，`pinned_cert_sha256` 的语义在 sing-box 系（公钥哈希）与 Xray 系（证书哈希）之间分裂、且解析结果不确定，导致填公钥哈希却被按证书哈希校验 → 永远对不上 → 握手失败且不回退 insecure。这正是「还是不通」的真凶。
+- **8/1 影响范围澄清**：Xray 8/1 禁用的是 **Xray 内核**的 `allowInsecure`。sing-box 内核的 `tls.insecure` 字段是独立机制，**不受 8/1 影响**。v2rayN 选 `sing_box` 模式即走 sing-box 内核，`insecure=1` 长期合法可用。
+- **纯 Xray 客户端（v2rayNG 等）**：8/1 后不能依赖 insecure，请改用 **VLESS-Reality（免验证）+ VMess（已带 `pinnedPeerCertificateChainSha256` 证书哈希固定）**。AnyTLS / TUIC / Hysteria2 在 Xray 上支持不全，建议换 sing-box 内核客户端（NekoBox / Hiddify / SFA）。
+
+### v2.0.7 (2026-07-27) — 已被 v2.0.8 纠正
+**修复尝试(证书固定 / 8-1 兼容) — 方向错误**
+- 曾尝试把 AnyTLS / TUIC / Hysteria2 链接的 `pinned_cert_sha256=` 填「公钥 SHA-256 的 base64」，VMess 走 Xray 的 `pinnedPeerCertificateChainSha256`（证书哈希 hex）。配置层真机握手验证通过，但 share link 跨客户端解析语义分裂导致实际连不通，故在 v2.0.8 翻转回 `insecure`。
 
 ### v2.0.6 (2026-07-23)
 **清理(Argo 固定隧道)**

@@ -3,7 +3,7 @@
 # protocols.sh — Singbox-Pro 5协议处理模块
 # VLESS Reality / AnyTLS / TUIC V5 / Hysteria2 / VMess WebSocket
 # ============================================================
-export PROTO_MOD_VERSION="2.0.7"
+export PROTO_MOD_VERSION="2.0.8"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -113,9 +113,9 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_public_key_sha256)
-    # sing-box 1.13+ 公钥哈希固定(正确语义); insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
-    echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp}&insecure=1#${ep}"
+    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
+    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
+    echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
 }
 
 # ============================================================
@@ -151,9 +151,9 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_public_key_sha256)
-    # sing-box 1.13+ 公钥哈希固定(正确语义); allow_insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp}&allow_insecure=1#${ep}"
+    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
+    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
 }
 
 # ============================================================
@@ -196,9 +196,9 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_public_key_sha256)
-    # sing-box 1.13+ 公钥哈希固定(正确语义); insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
-    echo -n "hysteria2://${password}@${host}:${port}/?pinned_cert_sha256=${fp}&insecure=1#${ep}"
+    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
+    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
+    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
 }
 
 # ============================================================
@@ -341,17 +341,20 @@ _proto_generate_cert() {
 }
 
 # ============================================================
-# 证书指纹 (TLS 协议共用, 供客户端证书固定/pinned 验证)
+# 证书指纹 (TLS 协议共用, 供 Xray 系客户端证书固定/pinned 验证)
 # ============================================================
-# 重要 (2026-08-01 背景):
-#   Xray 于 2026-08-01 禁用 allowInsecure, 自签证书场景必须改用证书固定(pinned)。
-#   但 sing-box 1.13.0 起把客户端固定字段从 pinned_cert_sha256 改名为
-#   certificate_public_key_sha256, 且哈希对象从「整张证书」改为「证书公钥(SPKI)」!
-#   实测: 用证书哈希 → sing-box 1.13.14 握手失败(HTTP 000); 用公钥哈希 → 成功(HTTP 200)。
-#   旧字段 pinned_cert_sha256 在 1.13.x 已被彻底移除(unknown field)。
-#   因此 anytls/tuic/hysteria2 链接里的 pinned_cert_sha256= 必须填「公钥哈希」(base64)。
-#   (Xray 系 TUIC/H2 的 pinned_cert_sha256 要的是证书哈希, 与 sing-box 语义不同 —
-#    故这些链接仅面向 sing-box 内核客户端, 见 README「客户端导入提醒」。)
+# 重要 (2026-08-01 背景 / share link 策略):
+#   Xray 于 2026-08-01 禁用 allowInsecure, 纯 Xray 内核客户端(v2rayNG 等)的自签证书场景
+#   必须改用证书固定(pinned)。脚本已为 VMess 提供 Xray 的 pinnedPeerCertificateChainSha256(证书哈希)。
+#   但 sing-box 系与 Xray 系的 pinned 字段语义分裂:
+#     - sing-box 1.13+ 字段为 certificate_public_key_sha256(「证书公钥」哈希)
+#     - Xray 系 TUIC/H2/AnyTLS 的 pinned_cert_sha256 要的是「证书」哈希
+#   而 share link 的 pinned_cert_sha256 在 v2rayN 等客户端解析时语义不确定, 易连不通
+#   (实测: 填公钥哈希但客户端按证书哈希校验 → 永远对不上 → 握手失败, 且不回退 insecure)。
+#   因此 AnyTLS/TUIC/Hysteria2 的分享链接统一用 insecure=1 / allow_insecure=1 跳过验证 ——
+#   这是 sing-box 内核(tls.insecure 字段)的合法行为, 不受 Xray 8/1 禁令影响。
+#   主力客户端 v2rayN 选 sing_box 模式即走 sing-box 内核, 可安心使用。
+#   纯 Xray 客户端请用 VLESS-Reality(免验证) / VMess(证书哈希 pin), 不依赖 insecure。
 
 _cert_public_key_sha256() {
     # sing-box 1.13.0+ 证书固定用: 「证书公钥(SPKI)的 SHA-256」base64 编码
