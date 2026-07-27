@@ -202,11 +202,12 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_sha256)
+    local fp=$(_cert_sha256)          # hex, Xray 系 (pinnedcertsha256)
+    local fp_b64=$(_cert_sha256_b64)  # base64, 小火箭/Clash.Meta (pinned_cert_sha256)
     if [ -n "$fp" ]; then
-        # 双字段: pinnedcertsha256(Xray 系) + pinned_cert_sha256(小火箭/Clash.Meta)
-        # 两者值相同, 客户端各取所需, 一套链接 Xray 与小火箭都通用
-        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}&pinned_cert_sha256=${fp}#${ep}"
+        # 双字段: pinnedcertsha256=<hex>(Xray 系) + pinned_cert_sha256=<base64>(小火箭/Clash.Meta)
+        # 两者格式不同(Xray 要 hex, Clash 要 base64), 一套链接两端通用
+        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}&pinned_cert_sha256=${fp_b64}#${ep}"
     else
         echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
     fi
@@ -352,16 +353,29 @@ _proto_generate_cert() {
 }
 
 _cert_sha256() {
-    # 计算 TLS 证书 SHA-256 指纹, 供客户端 pinned 验证用 (小写 hex, 无冒号)
+    # 计算 TLS 证书 SHA-256 指纹, 供客户端 pinned 验证用
+    # 输出: 64 位小写 hex (无冒号) —— Xray / sing-box / 多数客户端要求此格式
     # Xray:  TUIC/AnyTLS 用 pinned_cert_sha256, Hysteria2 用 pinnedcertsha256,
     #        VMess 用 tlsSettings.pinnedPeerCertificateChainSha256
-    # Clash: pinned_cert_sha256
-    # 注意: 各客户端均要求 64 位小写 hex (无冒号), openssl 默认输出带冒号, 故此处去除
+    # Clash: pinned_cert_sha256 (部分 Clash 内核要求 base64, 见 _cert_sha256_b64)
+    # 注意: openssl 实际输出形如 "sha256 Fingerprint=AB:CD:.." (小写 sha256),
+    #       旧写法用大写 SHA256 匹配不到前缀, 会把 "sha256 Fingerprint=" 整段塞进链接;
+    #       这里用 s/^[^=]*=// 去掉前缀, s/://g 去冒号, tr 转小写
     # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
     local cert="${1:-${SINGBOX_DIR}/cert.pem}"
     [ -f "$cert" ] || { echo ""; return 1; }
     openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-        | sed 's/^SHA256 Fingerprint=//; s/://g; y/ABCDEF/abcdef/'
+        | sed -E 's/^[^=]*=//; s/://g' | tr 'A-Z' 'a-z'
+}
+
+_cert_sha256_b64() {
+    # 计算 TLS 证书 SHA-256 指纹的 base64 编码, 供 Clash.Meta(mihomo)/小火箭
+    # 等要求 base64 格式的客户端 pinned 验证用 (Clash 系字节字段为 base64)
+    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
+    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
+    [ -f "$cert" ] || { echo ""; return 1; }
+    openssl x509 -in "$cert" -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -binary | openssl base64 -A
 }
 
 # ============================================================
