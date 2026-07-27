@@ -113,9 +113,10 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_sha256)
-    if [ -n "$fp" ]; then
-        echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp}#${ep}"
+    local fp_b64=$(_cert_sha256_b64)
+    if [ -n "$fp_b64" ]; then
+        # Xray/Clash/小火箭 的 anytls pinned_cert_sha256 均为 bytes 字段, 要求 base64
+        echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp_b64}#${ep}"
     else
         echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
     fi
@@ -154,9 +155,10 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_sha256)
-    if [ -n "$fp" ]; then
-        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp}#${ep}"
+    local fp_b64=$(_cert_sha256_b64)
+    if [ -n "$fp_b64" ]; then
+        # Xray/Clash/小火箭 的 tuic pinned_cert_sha256 均为 bytes 字段, 要求 base64
+        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp_b64}#${ep}"
     else
         echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
     fi
@@ -202,12 +204,11 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    local fp=$(_cert_sha256)          # hex, Xray 系 (pinnedcertsha256)
-    local fp_b64=$(_cert_sha256_b64)  # base64, 小火箭/Clash.Meta (pinned_cert_sha256)
-    if [ -n "$fp" ]; then
-        # 双字段: pinnedcertsha256=<hex>(Xray 系) + pinned_cert_sha256=<base64>(小火箭/Clash.Meta)
-        # 两者格式不同(Xray 要 hex, Clash 要 base64), 一套链接两端通用
-        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp}&pinned_cert_sha256=${fp_b64}#${ep}"
+    local fp_b64=$(_cert_sha256_b64)  # base64, Xray/Clash/小火箭 的 bytes 字段均要求 base64
+    if [ -n "$fp_b64" ]; then
+        # 双字段名: pinnedcertsha256(Xray 系, 无下划线) + pinned_cert_sha256(Clash/小火箭, 有下划线)
+        # 值均为 base64 (Xray 的 bytes 字段与 Clash 一致), 一套链接两端通用
+        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp_b64}&pinned_cert_sha256=${fp_b64}#${ep}"
     else
         echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
     fi
