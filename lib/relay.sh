@@ -431,7 +431,7 @@ _relay_import_token() {
                 -keyout "$key_path" -out "$cert_path" \
                 -days 3650 -nodes -subj "/CN=singbox-pro" 2>/dev/null
             _ok "自签证书已生成 (${cert_path})"
-            _warn "自签证书客户端需开启「跳过证书验证 / allowInsecure」"
+            _warn "自签证书: sing-box 内核客户端无需跳过证书验证(已内置公钥指纹固定); Shadowrocket 可保留「跳过证书验证」(非 Xray, 8/1 不受影响)"
         fi
     fi
 

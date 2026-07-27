@@ -3,7 +3,7 @@
 # protocols.sh — Singbox-Pro 5协议处理模块
 # VLESS Reality / AnyTLS / TUIC V5 / Hysteria2 / VMess WebSocket
 # ============================================================
-export PROTO_MOD_VERSION="2.0.6"
+export PROTO_MOD_VERSION="2.0.7"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -113,9 +113,9 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allow_insecure
-    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
-    echo -n "anytls://${password}@${server_ip}:${port}?allow_insecure=1#${ep}"
+    local fp=$(_cert_public_key_sha256)
+    # sing-box 1.13+ 公钥哈希固定(正确语义); insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
+    echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp}&insecure=1#${ep}"
 }
 
 # ============================================================
@@ -151,9 +151,9 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allow_insecure
-    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    local fp=$(_cert_public_key_sha256)
+    # sing-box 1.13+ 公钥哈希固定(正确语义); allow_insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp}&allow_insecure=1#${ep}"
 }
 
 # ============================================================
@@ -196,9 +196,9 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 insecure
-    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
-    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
+    local fp=$(_cert_public_key_sha256)
+    # sing-box 1.13+ 公钥哈希固定(正确语义); insecure=1 给 Shadowrocket/Clash 等非 sing-box 内核兜底
+    echo -n "hysteria2://${password}@${host}:${port}/?pinned_cert_sha256=${fp}&insecure=1#${ep}"
 }
 
 # ============================================================
@@ -239,9 +239,13 @@ EOF
 _proto_vmess_ws_uri() {
     local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
     local name="$5"
+    local fp=$(_cert_sha256)
 
-    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allowInsecure
-    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
+    # VMess 标准 vmess:// 链接 (base64 json) 无法携带证书指纹, 故输出可直导入
+    # v2rayN / v2rayNG / NekoBox 的完整 Xray outbound 配置:
+    #   - security=tls 启用 TLS (服务端已配自签证书)
+    #   - tlsSettings.pinnedPeerCertificateChainSha256 固定证书(证书哈希, hex), 无需 allowInsecure
+    #   - Xray 2026-08-01 禁用 allowInsecure 后, 此配置仍可正常连接
     # 导入方式: 复制下面整段 JSON → v2rayN「设置 → 从剪贴板导入」
     jq -nc \
         --arg addr "$server_ip" \
@@ -249,6 +253,7 @@ _proto_vmess_ws_uri() {
         --arg id "$uuid" \
         --arg path "$ws_path" \
         --arg sni "$server_ip" \
+        --arg fp "$fp" \
         '{
             outbounds: [{
                 protocol: "vmess",
@@ -266,7 +271,8 @@ _proto_vmess_ws_uri() {
                     security: "tls",
                     tlsSettings: {
                         serverName: $sni,
-                        allowInsecure: true
+                        pinnedPeerCertificateChainSha256: $fp,
+                        allowInsecure: false
                     }
                 }
             }]
@@ -334,13 +340,43 @@ _proto_generate_cert() {
     return 1
 }
 
-# _cert_sha256 / _cert_sha256_b64 已废弃
-# 自签证书场景下, pinned 方案在多客户端组合下不稳定 (anytls/tuic/hy2 在
-# v2rayN/Xray 26.4.17 等客户端连不通), 统一改用 allow_insecure / insecure,
-# 由客户端勾选「跳过证书验证」。如需重新启用 pinned, 参考 git 历史:
-#   581708d 证书固定双兼容 (初始)
-#   a1b0b4f sed 前缀大小写修复
-#   2bbb0af hex 改 base64
+# ============================================================
+# 证书指纹 (TLS 协议共用, 供客户端证书固定/pinned 验证)
+# ============================================================
+# 重要 (2026-08-01 背景):
+#   Xray 于 2026-08-01 禁用 allowInsecure, 自签证书场景必须改用证书固定(pinned)。
+#   但 sing-box 1.13.0 起把客户端固定字段从 pinned_cert_sha256 改名为
+#   certificate_public_key_sha256, 且哈希对象从「整张证书」改为「证书公钥(SPKI)」!
+#   实测: 用证书哈希 → sing-box 1.13.14 握手失败(HTTP 000); 用公钥哈希 → 成功(HTTP 200)。
+#   旧字段 pinned_cert_sha256 在 1.13.x 已被彻底移除(unknown field)。
+#   因此 anytls/tuic/hysteria2 链接里的 pinned_cert_sha256= 必须填「公钥哈希」(base64)。
+#   (Xray 系 TUIC/H2 的 pinned_cert_sha256 要的是证书哈希, 与 sing-box 语义不同 —
+#    故这些链接仅面向 sing-box 内核客户端, 见 README「客户端导入提醒」。)
+
+_cert_public_key_sha256() {
+    # sing-box 1.13.0+ 证书固定用: 「证书公钥(SPKI)的 SHA-256」base64 编码
+    # 官方生成命令:
+    #   openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der \
+    #     | openssl dgst -sha256 -binary | openssl enc -base64
+    # 注意: 是「公钥哈希」, 不是「证书哈希」! 这是 2026 年 pin 能连通的关键。
+    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
+    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
+    [ -f "$cert" ] || { echo ""; return 1; }
+    openssl x509 -in "$cert" -pubkey -noout 2>/dev/null \
+        | openssl pkey -pubin -outform der 2>/dev/null \
+        | openssl dgst -sha256 -binary 2>/dev/null \
+        | openssl enc -base64 -A 2>/dev/null
+}
+
+_cert_sha256() {
+    # Xray VMess tlsSettings.pinnedPeerCertificateChainSha256 用: 证书 SHA-256 (hex, 无冒号)
+    # 注意这是「证书哈希」(Xray 语义), 与 sing-box 的「公钥哈希」(_cert_public_key_sha256) 不同!
+    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
+    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
+    [ -f "$cert" ] || { echo ""; return 1; }
+    openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
+        | sed -E 's/^[^=]*=//; s/://g' | tr 'A-Z' 'a-z'
+}
 
 # ============================================================
 # 添加入站到配置
