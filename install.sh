@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.6"
+export SCRIPT_VERSION="2.0.8"
 # SB_VERSION 由 lib/core.sh 统一定义（SSOT），安装阶段在下载模块后从中读取
 
 # --- 颜色 ---
