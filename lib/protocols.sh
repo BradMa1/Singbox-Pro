@@ -113,13 +113,9 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    local fp_b64=$(_cert_sha256_b64)
-    if [ -n "$fp_b64" ]; then
-        # Xray/Clash/小火箭 的 anytls pinned_cert_sha256 均为 bytes 字段, 要求 base64
-        echo -n "anytls://${password}@${server_ip}:${port}?pinned_cert_sha256=${fp_b64}#${ep}"
-    else
-        echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
-    fi
+    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allow_insecure
+    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
+    echo -n "anytls://${password}@${server_ip}:${port}?allow_insecure=1#${ep}"
 }
 
 # ============================================================
@@ -155,13 +151,9 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    local fp_b64=$(_cert_sha256_b64)
-    if [ -n "$fp_b64" ]; then
-        # Xray/Clash/小火箭 的 tuic pinned_cert_sha256 均为 bytes 字段, 要求 base64
-        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&pinned_cert_sha256=${fp_b64}#${ep}"
-    else
-        echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
-    fi
+    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allow_insecure
+    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
 }
 
 # ============================================================
@@ -204,14 +196,9 @@ _proto_hy2_uri() {
     fi
 
     local ep=$(_url_encode "$name")
-    local fp_b64=$(_cert_sha256_b64)  # base64, Xray/Clash/小火箭 的 bytes 字段均要求 base64
-    if [ -n "$fp_b64" ]; then
-        # 双字段名: pinnedcertsha256(Xray 系, 无下划线) + pinned_cert_sha256(Clash/小火箭, 有下划线)
-        # 值均为 base64 (Xray 的 bytes 字段与 Clash 一致), 一套链接两端通用
-        echo -n "hysteria2://${password}@${host}:${port}/?pinnedcertsha256=${fp_b64}&pinned_cert_sha256=${fp_b64}#${ep}"
-    else
-        echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
-    fi
+    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 insecure
+    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
+    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
 }
 
 # ============================================================
@@ -252,13 +239,9 @@ EOF
 _proto_vmess_ws_uri() {
     local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
     local name="$5"
-    local fp=$(_cert_sha256)
 
-    # VMess 标准 vmess:// 链接 (base64 json) 无法携带证书指纹, 故输出可直导入
-    # v2rayN / v2rayNG / NekoBox 的完整 Xray outbound 配置:
-    #   - security=tls 启用 TLS (服务端已配自签证书)
-    #   - tlsSettings.pinnedPeerCertificateChainSha256 固定证书, 无需 allowInsecure
-    #   - Xray 2026-08-01 禁用 allowInsecure 后, 此配置仍可正常连接
+    # 自签证书场景: pinned 方案在多客户端组合下不稳定, 统一走 allowInsecure
+    # 客户端需勾选「跳过证书验证 / allowInsecure / skip-cert-verify」
     # 导入方式: 复制下面整段 JSON → v2rayN「设置 → 从剪贴板导入」
     jq -nc \
         --arg addr "$server_ip" \
@@ -266,7 +249,6 @@ _proto_vmess_ws_uri() {
         --arg id "$uuid" \
         --arg path "$ws_path" \
         --arg sni "$server_ip" \
-        --arg fp "$fp" \
         '{
             outbounds: [{
                 protocol: "vmess",
@@ -284,8 +266,7 @@ _proto_vmess_ws_uri() {
                     security: "tls",
                     tlsSettings: {
                         serverName: $sni,
-                        pinnedPeerCertificateChainSha256: $fp,
-                        allowInsecure: false
+                        allowInsecure: true
                     }
                 }
             }]
@@ -353,31 +334,13 @@ _proto_generate_cert() {
     return 1
 }
 
-_cert_sha256() {
-    # 计算 TLS 证书 SHA-256 指纹, 供客户端 pinned 验证用
-    # 输出: 64 位小写 hex (无冒号) —— Xray / sing-box / 多数客户端要求此格式
-    # Xray:  TUIC/AnyTLS 用 pinned_cert_sha256, Hysteria2 用 pinnedcertsha256,
-    #        VMess 用 tlsSettings.pinnedPeerCertificateChainSha256
-    # Clash: pinned_cert_sha256 (部分 Clash 内核要求 base64, 见 _cert_sha256_b64)
-    # 注意: openssl 实际输出形如 "sha256 Fingerprint=AB:CD:.." (小写 sha256),
-    #       旧写法用大写 SHA256 匹配不到前缀, 会把 "sha256 Fingerprint=" 整段塞进链接;
-    #       这里用 s/^[^=]*=// 去掉前缀, s/://g 去冒号, tr 转小写
-    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
-    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
-    [ -f "$cert" ] || { echo ""; return 1; }
-    openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-        | sed -E 's/^[^=]*=//; s/://g' | tr 'A-Z' 'a-z'
-}
-
-_cert_sha256_b64() {
-    # 计算 TLS 证书 SHA-256 指纹的 base64 编码, 供 Clash.Meta(mihomo)/小火箭
-    # 等要求 base64 格式的客户端 pinned 验证用 (Clash 系字节字段为 base64)
-    # 参数 $1: 证书路径 (默认 ${SINGBOX_DIR}/cert.pem)
-    local cert="${1:-${SINGBOX_DIR}/cert.pem}"
-    [ -f "$cert" ] || { echo ""; return 1; }
-    openssl x509 -in "$cert" -outform DER 2>/dev/null \
-        | openssl dgst -sha256 -binary | openssl base64 -A
-}
+# _cert_sha256 / _cert_sha256_b64 已废弃
+# 自签证书场景下, pinned 方案在多客户端组合下不稳定 (anytls/tuic/hy2 在
+# v2rayN/Xray 26.4.17 等客户端连不通), 统一改用 allow_insecure / insecure,
+# 由客户端勾选「跳过证书验证」。如需重新启用 pinned, 参考 git 历史:
+#   581708d 证书固定双兼容 (初始)
+#   a1b0b4f sed 前缀大小写修复
+#   2bbb0af hex 改 base64
 
 # ============================================================
 # 添加入站到配置
