@@ -367,6 +367,10 @@ EOF
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable sing-box >/dev/null 2>&1
 
+        # 启动前自动修复 legacy DNS（sing-box 1.12+ 要求 type+server 新格式），
+        # 避免保留旧 config 的机器在 install 直接 restart 时触发 FATAL
+        _sb_fix_legacy_dns "$CONFIG_FILE"
+
         # 启动并验证；systemd 不可用时（容器未运行 systemd）回退 nohup
         _info "正在启动 sing-box..."
         if systemctl restart sing-box 2>/dev/null && systemctl is-active --quiet sing-box 2>/dev/null; then
