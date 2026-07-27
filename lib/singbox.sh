@@ -515,21 +515,29 @@ _sb_upgrade_scripts() {
     echo ""
 
     local repo="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
-    local mirror="${GH_PROXY:-https://ghproxy.net/}${repo}"
     local lib_dir="$(dirname "$(readlink -f "$0")")/lib"
 
-    # 先检测最新版本号
+    # 检测最新版本号: 读 lib/protocols.sh 的 PROTO_MOD_VERSION (随升级自动同步,
+    # 主源刷新比 install.sh 快); 若设置了 GH_PROXY 优先走镜像, 避免主源 CDN 缓存
+    # 导致"永远 2.0.6"的假象。install.sh 的 SCRIPT_VERSION 仅作最后兜底。
     _info "正在检查最新版本..."
+    local src="${repo}"
+    if [ -n "${GH_PROXY:-}" ]; then
+        src="${GH_PROXY%/}/${repo#https://}"
+    fi
     local remote_ver
-    remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/install.sh" 2>/dev/null | grep -oP 'SCRIPT_VERSION="\K[^"]+' || echo "")
+    remote_ver=$(curl -fsSL --connect-timeout 10 "${src}/lib/protocols.sh" 2>/dev/null | sed -n 's/^export PROTO_MOD_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
     if [ -z "$remote_ver" ]; then
-        _warn "主源检查失败，尝试镜像..."
-        remote_ver=$(curl -fsSL --connect-timeout 10 "${mirror}" 2>/dev/null | grep -oP 'SCRIPT_VERSION="\K[^"]+' || echo "")
+        _warn "镜像检查失败，回退主源..."
+        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/lib/protocols.sh" 2>/dev/null | sed -n 's/^export PROTO_MOD_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
+    fi
+    if [ -z "$remote_ver" ]; then
+        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/install.sh" 2>/dev/null | sed -n 's/^export SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
     fi
 
     [ -z "$remote_ver" ] && { _error "无法检测最新版本，请检查网络"; read -p "按回车键返回..."; return 1; }
 
-    echo -e "  当前版本: ${SCRIPT_VERSION:-2.0.6}"
+    echo -e "  当前版本: ${PROTO_MOD_VERSION:-${SCRIPT_VERSION:-2.0.6}}"
     echo -e "  最新版本: ${remote_ver}"
     echo ""
 
