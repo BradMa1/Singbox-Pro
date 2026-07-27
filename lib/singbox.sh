@@ -269,8 +269,35 @@ _sb_manage_nohup() {
     esac
 }
 
+# --- 自动修复 legacy DNS（sing-box 1.12+ 要求 type+server 新格式）---
+# 幂等：仅当 dns.servers 存在 legacy 特征（address 字段 / server_port 字段 / 缺 type）时才改写，
+# 对已正确配置（type+server）无副作用。供 restart 前自动调用，避免老机器升级 1.13 后启动 FATAL。
+_sb_fix_legacy_dns() {
+    local cfg="${1:-$CONFIG_FILE}"
+    command -v jq >/dev/null 2>&1 || return 0
+    [ -f "$cfg" ] || return 0
+    local need
+    need=$(jq -r '[ (.dns.servers // [])[] | (.address != null or .server_port != null or (has("type")|not)) ] | any' "$cfg" 2>/dev/null)
+    [ "$need" = "true" ] || return 0
+    cp "$cfg" "${cfg}.bak.$(date +%Y%m%d_%H%M%S)" 2>/dev/null
+    if jq '
+      .dns.servers |= map(
+        (if has("address") then (.server = .address | del(.address)) else . end)
+        | (if has("server_port") then (.server = (.server + ":" + (.server_port|tostring)) | del(.server_port)) else . end)
+        | (if (has("type") | not) then (.type = "udp") else . end)
+      )
+    ' "$cfg" > "${cfg}.tmp" 2>/dev/null && [ -s "${cfg}.tmp" ]; then
+        mv "${cfg}.tmp" "$cfg"
+        _info "检测到 legacy DNS 格式，已自动修复为 sing-box 1.12+ 的 type+server 新格式"
+    else
+        rm -f "${cfg}.tmp"
+        _warn "legacy DNS 自动修复失败（jq 处理异常），请手动检查 $cfg"
+    fi
+}
+
 # --- 重启服务并验证 ---
 _sb_restart_and_verify() {
+    _sb_fix_legacy_dns "$CONFIG_FILE"
     _manage_service "restart"
     sleep 2
 
