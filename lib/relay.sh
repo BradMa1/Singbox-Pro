@@ -3,7 +3,7 @@
 # relay.sh — 中转/端口转发管理模块
 # 支持：协议中转 (落地机→中转机) + iptables 端口转发
 # ============================================================
-export RELAY_MOD_VERSION="2.0.6"
+export RELAY_MOD_VERSION="2.0.8"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then

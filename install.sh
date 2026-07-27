@@ -332,7 +332,7 @@ _step_config() {
 }
 CONFEOF
         cat > "${SINGBOX_DIR}/metadata.json" << 'CONFEOF'
-{"version": "2.0.6", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
+{"version": "2.0.8", "created_at": "", "server_ip": "", "protocols": {}, "argo": {}}
 CONFEOF
         _ok "配置文件已生成（极简模式）"
     fi
