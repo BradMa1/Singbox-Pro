@@ -103,14 +103,12 @@ _sb_generate_config() {
             {
                 "type": "udp",
                 "tag": "dns-local",
-                "server": "223.5.5.5",
-                "server_port": 53
+                "address": "223.5.5.5"
             },
             {
                 "type": "udp",
                 "tag": "dns-remote",
-                "server": "8.8.8.8",
-                "server_port": 53
+                "address": "8.8.8.8"
             }
         ],
         "rules": [
