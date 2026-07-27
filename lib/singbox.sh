@@ -443,7 +443,7 @@ _streaming_dns_set() {
     fi
 
     # 添加新的流媒体 DNS
-    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","server":"'"$addr"'","server_port":53,"detour":"proxy"}]'
+    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","type":"udp","address":"'"$addr"'","detour":"proxy"}]'
     _atomic_modify_json "$CONFIG_FILE" '.dns.rules += [{
         "domain_suffix": [
             "netflix.com", "nflxvideo.net", "nflxext.com",
