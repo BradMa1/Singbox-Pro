@@ -1282,6 +1282,13 @@ _ui_view_nodes() {
     clear
     echo -e "${CYAN}=== 查看节点链接 ===${NC}"
     echo ""
+    # 客户端使用提示: 自签证书场景必须勾选「跳过证书验证」+ v2rayN 必须选 sing_box 配置项
+    # 否则 anytls/tuic/hy2 节点会连不通 (Xray 26.4.17 不支持 AnyTLS 出站, 对 pinned 字段支持也不全)
+    echo -e "${YELLOW}客户端导入提醒:${NC}"
+    echo -e "  ${YELLOW}1.${NC} 自签证书: 客户端必须勾选「${YELLOW}跳过证书验证 / allowInsecure / skip-cert-verify${NC}」"
+    echo -e "  ${YELLOW}2.${NC} v2rayN: 节点的「${YELLOW}配置项${NC}」下拉框必须选 ${YELLOW}sing_box${NC} (选 xray/留空都会连不通)"
+    echo -e "  ${YELLOW}3.${NC} VLESS-Reality 节点免证书校验, 不受以上限制"
+    echo ""
 
     local server_ip=$(_get_public_ip)
     echo -e "服务器 IP: ${GREEN}${server_ip}${NC}"
@@ -1338,7 +1345,7 @@ _ui_view_nodes() {
                 local full=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
                 echo -e "      标准 vmess:// (小火箭): ${GREEN}${std}${NC}"
                 echo -e "      完整 Xray 配置 (v2rayN): ${GREEN}${full}${NC}"
-                echo -e "      ${YELLOW}小火箭需勾选「允许不安全」${NC}"
+                echo -e "      ${YELLOW}导入后须勾选「跳过证书验证 / allowInsecure」${NC}"
                 ;;
         esac
         echo ""
