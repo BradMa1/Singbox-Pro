@@ -296,6 +296,10 @@ _sb_restart_and_verify() {
         if ! check_err=$("$SINGBOX_BIN" check -c "$CONFIG_FILE" 2>&1); then
             _error "配置校验失败，已取消重启以防断线（请用 'sing-box check -c $CONFIG_FILE' 查看详情）"
             echo "$check_err" >&2
+            if echo "$check_err" | grep -qi "missing domain resolver"; then
+                _warn "病根: 配置文件里某个 DNS server 的地址填成了【域名】而非 IP，sing-box 无法解析它。"
+                _warn "排查: jq '.dns.servers' $CONFIG_FILE  把其中的域名地址改成 IP（如 223.5.5.5）即可。"
+            fi
             return 1
         fi
     fi
@@ -483,9 +487,13 @@ _streaming_dns_status() {
 _streaming_dns_set() {
     local addr="$1"
     [ -z "$addr" ] && { _error "请提供 DNS 地址"; return 1; }
-    echo "$addr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
-        _warn "地址格式不标准: $addr，继续..."
-    }
+    # 流媒体 DNS 必须是 IP（v4/v6）。域名地址会触发 sing-box 1.12+ 的
+    # "missing domain resolver for domain server address" 启动失败，进而被
+    # 重启前校验拦下、服务无法恢复。含字母即视为域名，直接拒绝。
+    if echo "$addr" | grep -qE '[a-zA-Z]'; then
+        _error "流媒体 DNS 必须为 IP 地址（如 1.1.1.1），不支持域名: $addr"
+        return 1
+    fi
 
     _sb_backup_config
 
