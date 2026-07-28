@@ -3,7 +3,7 @@
 # ui.sh — Singbox-Pro 可视化菜单模块
 # 所有菜单、面板、状态显示集中管理
 # ============================================================
-export UI_MOD_VERSION="2.0.8"
+export UI_MOD_VERSION="2.0.9"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -14,7 +14,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.8}"
+SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.9}"
 
 # ============================================================
 # 顶部横幅

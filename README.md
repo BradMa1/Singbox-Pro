@@ -37,7 +37,7 @@ bash --version
 
 ```
   ╔════════════════════════════════════════════════╗
-  ║              Singbox-Pro   v2.0.8              ║
+  ║              Singbox-Pro   v2.0.9              ║
   ║              Multi-Protocol Proxy              ║
   ╚════════════════════════════════════════════════╝
 
@@ -332,9 +332,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - VLESS Reality outbound 自动配置 `utls: chrome` 指纹（sing-box 要求）
 - 中转 Token 生成时自动读取落地机 metadata.json 获取 `public_key`
 - VMess WebSocket 使用服务端自签证书。**同时输出两种分享格式**：① 完整 Xray 配置 JSON（用 `pinnedPeerCertificateChainSha256` 证书固定，`allowInsecure: false`，无需跳过证书验证，Xray 8/1 禁用 allowInsecure 后仍可连），粘贴到 v2rayN / v2rayNG / NekoBox「从剪贴板导入」；② 标准 `vmess://base64` 链接（含 `tls` 字段，无法携带指纹），可导入**小火箭 / 通用客户端**，小火箭需保留「跳过证书验证」（它非 Xray，8/1 不受影响）。Clash 系（FlClash/Stash）对自签证书使用 `skip-cert-verify: true`
-- AnyTLS / Hysteria2 / TUIC 使用服务端自签证书，URI 统一用 `insecure=1` / `allow_insecure=1` 跳过验证。这是 **sing-box 内核（`tls.insecure` 字段）的合法行为，不受 Xray 8/1 禁用 `allowInsecure` 的影响**——主力客户端 v2rayN 选 `sing_box` 模式即走 sing-box 内核，可安心使用。`pinned_cert_sha256` 字段因 sing-box / Xray 两系语义分裂（公钥哈希 vs 证书哈希）且在 v2rayN 等客户端解析时语义不确定，已弃用，避免连不通。纯 Xray 客户端请改用 VLESS-Reality（免验证）/ VMess（证书哈希固定），不要依赖 insecure
+- AnyTLS / Hysteria2 使用服务端自签证书，URI 用 `insecure=1` 跳过验证（`insecure` 是 sing-box 与 mihomo/小火箭都认的字段，两系通用）。**TUIC 链接不携带任何证书跳过参数**（原因见下条），证书验证交给客户端自身开关（v2rayN「跳过证书验证」+ 小火箭「允许不安全」，用户均已开启）。`pinned_cert_sha256` 字段因 sing-box / Xray 两系语义分裂（公钥哈希 vs 证书哈希）且在 v2rayN 等客户端解析时语义不确定，已弃用，避免连不通。纯 Xray 客户端请改用 VLESS-Reality（免验证）/ VMess（证书哈希固定），不要依赖 insecure
 - **v2rayN 必须将节点的「配置项」下拉框选为 `sing_box`**（选 `xray` 或留空都会连不通）。原因：v2rayN 内置 Xray 不支持 AnyTLS 出站；切到 sing_box 内核处理这些协议即正常。**VLESS-Reality 节点无此限制**（任何内核都支持）
-- **TUIC v5 分享链接已含 `version=5`**，客户端（小火箭 / v2rayN 等）会直接按 v5 解析，无需手动重设
+- **TUIC v5 分享链接已含 `version=5`，但绝对不能带 `allow_insecure=1`**：`allow_insecure` 是 **sing-box 内核 TUIC 专属字段**（`tls.insecure`），而 mihomo / 小火箭的 TUIC 结构体只有 `skip-cert-verify`、**根本没有 `allow_insecure`**。该非标准参数会干扰小火箭对 TUIC 版本的解析，导致导入后默认回退 **v4**（实际应为 v5）而连不通——这正是「导入小火箭显示 v4、手动改 v5 才通」的根因。故 TUIC 链接保持标准 v5 格式（`version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3`），证书跳过由客户端开关负责。anytls / hy2 用 `insecure=1` 不受影响（小火箭认该字段）
 - **Argo 隧道仅支持 VLESS-WS**：Cloudflare Tunnel（cloudflared）只代理 HTTP/HTTPS（七层），因此 Argo 节点功能限定为 VLESS-WS。TUIC / Hysteria2 / VLESS-Reality / VMess 是裸 TCP/UDP 协议，无法通过 Argo 暴露（CF 侧显示隧道活跃但流量不通），这类节点请走直连或真实 IP
 - **已运行的 Argo 隧道在升级/改配置后需手动重启**：`systemctl daemon-reload && systemctl restart argo-tunnel@<端口>`（或 `argo-fixed@<端口>`），否则仍使用旧 unit 的 `localhost` origin
 - **固定隧道必须在 Cloudflare Dashboard 配置 Public Hostname Service**：固定(named)隧道的 ingress 路由由云端控制，脚本无法设置。添加固定隧道后，需到 Dashboard 把对应域名的 Service 设为 `http://127.0.0.1:<端口>`（明文 http、非 localhost），否则小火箭等客户端会超时（CF 侧隧道显示活跃但流量不通）
@@ -346,6 +346,12 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.0.9 (2026-07-24)
+**修复(TUIC 链接在小火箭被识别成 v4) — 重要**
+- **根因**：TUIC 分享链接之前带 `allow_insecure=1`。该字段是 **sing-box 内核 TUIC 专属**（`tls.insecure`），而 mihomo / 小火箭的 TUIC 结构体只有 `skip-cert-verify`、**根本没有 `allow_insecure`**。这个非标准参数干扰了小火箭对 TUIC 版本的解析，导入后默认回退 v4（应为 v5）导致连不通。对比：anytls / hy2 用 `insecure=1`（小火箭认该字段）不受影响，唯独 TUIC 中招——差别正是 `insecure` vs `allow_insecure`。
+- **修复**：TUIC 链接去掉 `allow_insecure=1`，回归标准 v5 格式（`version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3`）。自签证书跳过验证交给客户端自身开关（v2rayN「跳过证书验证」+ 小火箭「允许不安全」，用户均已开启），无需链接里塞字段。
+- **影响**：生成链接后需重导客户端；v2rayN(sing_box 模式) 与小火箭均靠各自开关兜证书，不受影响。
 
 ### v2.0.8 (2026-07-27)
 **翻转(share link 证书策略) — 重大**

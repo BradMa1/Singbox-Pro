@@ -3,7 +3,7 @@
 # protocols.sh — Singbox-Pro 5协议处理模块
 # VLESS Reality / AnyTLS / TUIC V5 / Hysteria2 / VMess WebSocket
 # ============================================================
-export PROTO_MOD_VERSION="2.0.8"
+export PROTO_MOD_VERSION="2.0.9"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -151,9 +151,14 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
-    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    # 注意: TUIC 链接**不能**带 allow_insecure=1 !
+    #   - allow_insecure 是 sing-box 内核 TUIC 专属字段(tls.insecure), mihomo/Shadowrocket
+    #     的 TUIC 结构体只有 skip-cert-verify, 根本没有 allow_insecure。该非标准参数会
+    #     干扰小火箭对 TUIC 版本的解析, 导致导入后默认回退 v4 (实际应为 v5) 而连不通。
+    #   - 自签证书跳过验证交给客户端自身开关: v2rayN(sing_box 模式)「跳过证书验证」+
+    #     Shadowrocket「允许不安全」, 两者用户均已开启, 可兜住。
+    #   - 故 TUIC 链接保持 TUIC v5 标准格式, 不塞 allow_insecure。
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3#${ep}"
 }
 
 # ============================================================
