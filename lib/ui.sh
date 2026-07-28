@@ -84,29 +84,28 @@ _ui_main_menu() {
         echo -e "  ${CYAN}【节点管理】${NC}"
         echo -e "    ${GREEN}[1]${NC} 添加节点          ${GREEN}[2]${NC} Argo 隧道节点"
         echo -e "    ${GREEN}[3]${NC} 查看节点链接      ${GREEN}[4]${NC} 删除节点"
-        echo -e "    ${GREEN}[5]${NC} 修改节点"
+        echo -e "    ${GREEN}[5]${NC} 修改节点          ${GREEN}[6]${NC} 节点分享(订阅+二维码)"
         echo ""
 
         echo -e "  ${CYAN}【服务控制】${NC}"
-        echo -e "    ${GREEN}[6]${NC} 重启服务          ${GREEN}[7]${NC} 停止服务"
+        echo -e "    ${GREEN}[7]${NC} 重启服务          ${GREEN}[8]${NC} 停止服务"
         echo ""
 
         echo -e "  ${CYAN}【进阶功能】${NC}"
-        echo -e "    ${GREEN}[8]${NC} 中转管理          ${GREEN}[9]${NC} WARP 管理"
-        echo -e "    ${GREEN}[10]${NC} IPv6 优化        ${GREEN}[11]${NC} 流媒体 DNS"
+        echo -e "    ${GREEN}[9]${NC} 中转管理          ${GREEN}[10]${NC} WARP 管理"
+        echo -e "    ${GREEN}[11]${NC} IPv6 优化        ${GREEN}[12]${NC} 流媒体 DNS"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
-        echo -e "    ${GREEN}[12]${NC} 安装/更新核心    ${RED}[13]${NC} 卸载脚本"
-        echo -e "    ${GREEN}[14]${NC} 健康检查          ${GREEN}[15]${NC} 升级脚本"
-        echo -e "    ${GREEN}[16]${NC} 节点分享(订阅+二维码)  ${GREEN}[17]${NC} 检查核心更新"
+        echo -e "    ${GREEN}[13]${NC} 安装/更新核心(内核)  ${RED}[14]${NC} 卸载脚本"
+        echo -e "    ${GREEN}[15]${NC} 健康检查          ${GREEN}[16]${NC} 升级脚本(脚本)"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-17]: " choice
+        read -p "  请输入选项 [0-16]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -114,18 +113,17 @@ _ui_main_menu() {
             3) _ui_view_nodes ;;
             4) _ui_delete_node ;;
             5) _ui_modify_node ;;
-            6) _ui_restart_service ;;
-            7) _ui_stop_service ;;
-            8) _ui_relay_menu ;;
-            9) _ui_warp_menu ;;
-            10) _ui_ipv6_menu ;;
-            11) _ui_streaming_dns_menu ;;
-            12) _ui_update_core ;;
-            13) _ui_uninstall ;;
-            14) _ui_health_check ;;
-            15) _ui_upgrade_scripts ;;
-            16) _ui_subscription ;;
-            17) _ui_check_core_update ;;
+            6) _ui_subscription ;;
+            7) _ui_restart_service ;;
+            8) _ui_stop_service ;;
+            9) _ui_relay_menu ;;
+            10) _ui_warp_menu ;;
+            11) _ui_ipv6_menu ;;
+            12) _ui_streaming_dns_menu ;;
+            13) _ui_update_core ;;
+            14) _ui_uninstall ;;
+            15) _ui_health_check ;;
+            16) _ui_upgrade_scripts ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1382,19 +1380,6 @@ _ui_subscription() {
         echo ""
     fi
 
-    read -p "按回车键返回..."
-}
-
-# ============================================================
-# 检查 sing-box 核心更新
-# ============================================================
-
-_ui_check_core_update() {
-    clear
-    echo -e "${CYAN}=== 检查 sing-box 核心更新 ===${NC}"
-    echo ""
-    _sb_check_core_update
-    echo ""
     read -p "按回车键返回..."
 }
 
