@@ -3,7 +3,10 @@
 # core.sh — Singbox-Pro 核心工具模块
 # 被 sb.sh source 加载，也可独立运行进行环境检测
 # ============================================================
-export CORE_VERSION="2.0.9"
+# 管理脚本版本号 SSOT（唯一字面量来源）:
+#   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它，改版本号只需改这一处。
+export PROJECT_VERSION="2.0.9"
+export SCRIPT_VERSION="${PROJECT_VERSION}"
 
 # --- 颜色定义 ---
 if [ -z "${RED:-}" ]; then
@@ -90,6 +93,19 @@ if ! declare -f _detect_init_system >/dev/null 2>&1; then
         fi
     }
 fi
+# --- 架构检测 (SSOT，被 install.sh/singbox.sh/argo.sh/warp.sh 共用) ---
+if ! declare -f _get_arch >/dev/null 2>&1; then
+    _get_arch() {
+        local arch=$(uname -m)
+        case $arch in
+            x86_64|amd64) echo "amd64" ;;
+            aarch64|arm64) echo "arm64" ;;
+            armv7l)        echo "armv7" ;;
+            *)             echo "amd64" ;;
+        esac
+    }
+fi
+
 [ -z "${INIT_SYSTEM:-}" ] && _detect_init_system
 
 # --- 系统信息获取 ---
@@ -416,7 +432,7 @@ export CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}"
 
 # --- 独立运行时的环境检测 ---
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "=== Singbox-Pro Core v${CORE_VERSION} ==="
+    echo "=== Singbox-Pro Core v${PROJECT_VERSION} ==="
     echo ""
     echo "系统: $(_get_os_info)"
     echo "Init:  ${INIT_SYSTEM:-未检测}"

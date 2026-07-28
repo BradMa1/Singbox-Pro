@@ -6,8 +6,9 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.9"
-# SB_VERSION 由 lib/core.sh 统一定义（SSOT），安装阶段在下载模块后从中读取
+export SCRIPT_VERSION="${PROJECT_VERSION:-2.0.9}"
+# PROJECT_VERSION(SSOT) 由 lib/core.sh 定义；若已下载 lib 则提前 source 以获取真实版本号，
+# 否则用上面的兜底字面量（首次 curl 管道安装、lib 尚未下载的场景）。
 
 # --- 颜色 ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
@@ -17,6 +18,14 @@ _info()  { echo -e "${CYAN}[信息]${NC} $1"; }
 _ok()    { echo -e "${GREEN}[成功]${NC} $1"; }
 _warn()  { echo -e "${YELLOW}[注意]${NC} $1"; }
 _err()   { echo -e "${RED}[错误]${NC} $1"; exit 1; }
+
+# --- 提前加载 core.sh（lib 已存在时）以获取 PROJECT_VERSION 等 SSOT 变量 ---
+# curl 管道首次安装场景下 lib 尚未下载，此处静默跳过，SCRIPT_VERSION 使用上面的兜底字面量
+_INSTALL_DIR_LOCAL="$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd)"
+if [ -f "${_INSTALL_DIR_LOCAL}/lib/core.sh" ]; then
+    # shellcheck disable=SC1091
+    source "${_INSTALL_DIR_LOCAL}/lib/core.sh" 2>/dev/null || true
+fi
 
 # --- 路径 ---
 SINGBOX_DIR="/usr/local/etc/sing-box"
@@ -43,10 +52,14 @@ _detect_os() {
     fi
 }
 
+# _get_arch 已由 core.sh（SSOT）统一定义；此处仅当 core 尚未加载时（如 curl 管道首次安装、
+# lib 尚未下载的场景）作为兜底定义，避免重复定义。
+if ! declare -f _get_arch >/dev/null 2>&1; then
 _get_arch() {
     local a=$(uname -m)
     case $a in x86_64|amd64) echo "amd64" ;; aarch64|arm64) echo "arm64" ;; *) echo "amd64" ;; esac
 }
+fi
 
 # --- 下载 ---
 _dl() {

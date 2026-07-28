@@ -3,7 +3,7 @@
 # singbox.sh — Sing-box 核心安装/配置/服务管理模块
 # 可被 sb.sh source 加载，也可独立运行
 # ============================================================
-export SINGBOX_MOD_VERSION="2.0.9"
+export SINGBOX_MOD_VERSION="${PROJECT_VERSION}"
 
 # --- 路径定义 ---
 SINGBOX_DIR="${SINGBOX_DIR:-/usr/local/etc/sing-box}"
@@ -21,16 +21,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-# --- 架构检测 ---
-_get_arch() {
-    local arch=$(uname -m)
-    case $arch in
-        x86_64|amd64) echo "amd64" ;;
-        aarch64|arm64) echo "arm64" ;;
-        armv7l)        echo "armv7" ;;
-        *)             echo "amd64" ;;
-    esac
-}
+# 注: _get_arch 已在 core.sh 统一定义（SSOT），此处不再重复
 
 # --- 安装/更新 sing-box 核心 ---
 _sb_install_core() {
@@ -174,7 +165,7 @@ SBEOF
 
 # --- 写入元数据 ---
 _sb_init_metadata() {
-    local ver="${SCRIPT_VERSION:-2.0.9}"
+    local ver="${SCRIPT_VERSION:-${PROJECT_VERSION}}"
     if [ ! -f "$METADATA_FILE" ]; then
         jq -n --arg v "$ver" '{
             version: $v,
@@ -298,6 +289,17 @@ _sb_fix_legacy_dns() {
 # --- 重启服务并验证 ---
 _sb_restart_and_verify() {
     _sb_fix_legacy_dns "$CONFIG_FILE"
+
+    # 重启前先校验配置，避免配置语法错误导致 sing-box 启动失败、服务断线
+    if [ -x "$SINGBOX_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+        local check_err
+        if ! check_err=$("$SINGBOX_BIN" check -c "$CONFIG_FILE" 2>&1); then
+            _error "配置校验失败，已取消重启以防断线（请用 'sing-box check -c $CONFIG_FILE' 查看详情）"
+            echo "$check_err" >&2
+            return 1
+        fi
+    fi
+
     _manage_service "restart"
     sleep 2
 
@@ -345,6 +347,32 @@ _sb_get_version() {
     else
         echo "未安装"
     fi
+}
+
+# --- 检查 sing-box 核心是否有新版本（GitHub latest release）---
+# 仅做查询+提示，不自动升级；实际升级在 _ui_update_core（菜单 [12]）手动触发。
+_sb_check_core_update() {
+    [ -x "$SINGBOX_BIN" ] || { _warn "sing-box 未安装，跳过核心版本检查"; return 1; }
+
+    local cur=$("$SINGBOX_BIN" version 2>/dev/null | head -n1 | awk '{print $3}')
+    [ -z "$cur" ] && { _warn "无法获取当前 sing-box 版本"; return 1; }
+
+    _info "正在查询 sing-box 最新版本..."
+    local latest=""
+    local api="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+    if [ -n "${GH_PROXY:-}" ]; then
+        latest=$(curl -fsSL --connect-timeout 10 "${GH_PROXY%/}/${api#https://}" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
+    fi
+    [ -z "$latest" ] && latest=$(curl -fsSL --connect-timeout 10 "$api" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
+    [ -z "$latest" ] && { _warn "无法获取最新版本（网络/API 限制，可稍后重试）"; return 1; }
+
+    if [ "$cur" = "$latest" ]; then
+        _info "sing-box 核心已是最新: v${cur}"
+        return 0
+    fi
+    _warn "sing-box 核心有新版本: 当前 v${cur} → 最新 v${latest}"
+    _info "如需更新，请运行: sb → 12 (安装/更新核心) → 输入 ${latest}"
+    return 0
 }
 
 # --- 获取服务状态 ---
@@ -517,19 +545,18 @@ _sb_upgrade_scripts() {
     local repo="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
     local lib_dir="$(dirname "$(readlink -f "$0")")/lib"
 
-    # 检测最新版本号: 读 lib/protocols.sh 的 PROTO_MOD_VERSION (随升级自动同步,
-    # 主源刷新比 install.sh 快); 若设置了 GH_PROXY 优先走镜像, 避免主源 CDN 缓存
-    # 导致"永远 2.0.6"的假象。install.sh 的 SCRIPT_VERSION 仅作最后兜底。
+    # 检测最新版本号: 读 lib/core.sh 的 PROJECT_VERSION（SSOT，所有模块统一引用）。
+    # 若设置了 GH_PROXY 优先走镜像, 避免主源 CDN 缓存导致"永远旧版本"的假象。
     _info "正在检查最新版本..."
     local src="${repo}"
     if [ -n "${GH_PROXY:-}" ]; then
         src="${GH_PROXY%/}/${repo#https://}"
     fi
     local remote_ver
-    remote_ver=$(curl -fsSL --connect-timeout 10 "${src}/lib/protocols.sh" 2>/dev/null | sed -n 's/^export PROTO_MOD_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
+    remote_ver=$(curl -fsSL --connect-timeout 10 "${src}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
     if [ -z "$remote_ver" ]; then
         _warn "镜像检查失败，回退主源..."
-        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/lib/protocols.sh" 2>/dev/null | sed -n 's/^export PROTO_MOD_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
+        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
     fi
     if [ -z "$remote_ver" ]; then
         remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/install.sh" 2>/dev/null | sed -n 's/^export SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
@@ -537,7 +564,7 @@ _sb_upgrade_scripts() {
 
     [ -z "$remote_ver" ] && { _error "无法检测最新版本，请检查网络"; read -p "按回车键返回..."; return 1; }
 
-    echo -e "  当前版本: ${PROTO_MOD_VERSION:-${SCRIPT_VERSION:-2.0.9}}"
+    echo -e "  当前版本: ${SCRIPT_VERSION:-${PROJECT_VERSION}}"
     echo -e "  最新版本: ${remote_ver}"
     echo ""
 
@@ -771,6 +798,11 @@ _sb_health_check() {
     else
         _include_status "WARP ($warp_status)" "warn"
     fi
+
+    # 7. 核心版本
+    echo -e "${BLUE}── 核心版本 ──${NC}"
+    _sb_check_core_update
+    echo ""
 
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════${NC}"

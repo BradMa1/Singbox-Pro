@@ -3,7 +3,7 @@
 # relay.sh — 中转/端口转发管理模块
 # 支持：协议中转 (落地机→中转机) + iptables 端口转发
 # ============================================================
-export RELAY_MOD_VERSION="2.0.9"
+export RELAY_MOD_VERSION="${PROJECT_VERSION}"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -393,13 +393,6 @@ _relay_import_token() {
     echo -n "  本机监听端口（回车随机 ${lport}）: "; read -r input_lport
     lport="${input_lport:-$lport}"
 
-    # 检查端口冲突
-    if _check_port_occupied "$lport" "tcp"; then
-        _error "端口 ${lport} 已被占用"
-        read -p "按回车键返回..."
-        return
-    fi
-
     # 选择入口协议
     echo ""
     echo "  入口协议（中转入口）:"
@@ -419,6 +412,15 @@ _relay_import_token() {
         4) in_type="anytls" ;;
         *) in_type="vless"; in_flow="xtls-rprx-vision" ;;
     esac
+
+    # 检查端口冲突（按入口协议的实际传输层检查：Hysteria2/TUIC 走 UDP，其余走 TCP）
+    local lproto="tcp"
+    case "$in_type" in hysteria2|tuic) lproto="udp" ;; esac
+    if _check_port_occupied "$lport" "$lproto"; then
+        _error "端口 ${lport} 已被占用 (${lproto})"
+        read -p "按回车键返回..."
+        return
+    fi
 
     # TLS 证书（非 VLESS 协议需要，无证书则自动生成自签证书）
     if [ "$in_type" != "vless" ]; then
@@ -473,8 +475,8 @@ _relay_import_token() {
     _manage_service "stop" 2>/dev/null || true
     sleep 1
 
-    # 备份
-    cp "$CONFIG_FILE" "${CONFIG_FILE}.bak.$(date +%s)"
+    # 备份（统一走 _sb_backup_config，带时间戳，避免覆盖旧备份）
+    _sb_backup_config
 
     # 合并入站 + 出站 + 路由规则
     local tmp_cfg=$(jq --argjson in "$(echo "$inbound_json" | jq .)" \

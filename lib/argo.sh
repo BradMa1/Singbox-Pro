@@ -3,7 +3,7 @@
 # argo.sh — Cloudflare Argo Tunnel 管理模块
 # 支持临时隧道和固定隧道 (Token) 两种模式
 # ============================================================
-export ARGO_MOD_VERSION="2.0.9"
+export ARGO_MOD_VERSION="${PROJECT_VERSION}"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -335,6 +335,13 @@ _argo_save_metadata() {
 
     [ ! -f "$ARGO_METADATA_FILE" ] && echo '{}' > "$ARGO_METADATA_FILE"
 
+    # 安全：metadata 文件默认权限 644（world-readable），token 不应明文落盘。
+    # 真正启动隧道用的是 ${SINGBOX_DIR}/argo/<port>.token（600 权限），元数据里只存掩码。
+    local token_disp=""
+    if [ -n "$token" ]; then
+        token_disp="${token:0:20}***"
+    fi
+
     local meta=$(jq -n \
         --arg tag "$tag" \
         --arg name "$name" \
@@ -345,7 +352,7 @@ _argo_save_metadata() {
         --arg path "$path" \
         --arg protocol "$protocol" \
         --arg type "$argo_type" \
-        --arg token "$token" \
+        --arg token "$token_disp" \
         --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
         '{($tag): {name: $name, domain: $domain, local_port: ($port|tonumber), ($cred_key): $cred_val, path: $path, protocol: $protocol, type: $type, token: $token, created_at: $created}}')
 
@@ -378,6 +385,35 @@ _argo_extract_token() {
     [ -z "$token" ] && token=$(echo "$input" | grep -oE 'ey[A-Za-z0-9_-]{20,}' | head -1)
     [ -z "$token" ] && token="$input"
     echo "$token"
+}
+
+# --- 固定隧道 Dashboard 配置提示（_ui_argo_add_fixed / _ui_argo_temp_to_fixed 共用）---
+# 固定(named)隧道的 ingress 路由由 Cloudflare 云端控制，本地 --url 参数会被忽略，
+# 必须在 Dashboard 把该域名的 Public Hostname Service 设为 http://127.0.0.1:<端口>。
+_argo_dashboard_hint() {
+    local port="$1" domain="$2"
+    _warn "╔═══════════════════════════════════════════════════════════╗"
+    _warn "║  ⚠️  必读：固定隧道需要去 Dashboard 配 Service URL  ⚠️    ║"
+    _warn "╚═══════════════════════════════════════════════════════════╝"
+    _info "固定隧道路由由 Cloudflare 云端控制，脚本无法在本地设置"
+    _warn "如果你不做下面这步，小火箭会显示'超时'，隧道永远不通！"
+    echo ""
+    _info "📌 Dashboard 配置步骤（一步一步来，不要漏）:"
+    _info "  ${CYAN}①${NC} 浏览器打开 ${GREEN}https://one.dash.cloudflare.com/${NC}"
+    _info "  ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels${NC}"
+    _info "  ${CYAN}③${NC} 找到隧道名里含 ${YELLOW}${port}${NC} 的那个，点它"
+    _info "  ${CYAN}④${NC} 切到 ${GREEN}Public Hostname${NC} 标签页"
+    _info "  ${CYAN}⑤${NC} 找到域名 ${YELLOW}${domain}${NC} 那行，点右侧 ${GREEN}编辑${NC}"
+    _info "  ${CYAN}⑥${NC} Service 这一栏："
+    _info "      Type 改为: ${RED}HTTP${NC}"
+    _info "      URL  改为: ${RED}http://127.0.0.1:${port}${NC}"
+    _info "      ⚠️ http 不能写成 https！"
+    _info "      ⚠️ 127.0.0.1 不能写成 localhost！"
+    _info "      ⚠️ Path 必须留空（不要填任何东西，包括 */blog）"
+    _info "  ${CYAN}⑦${NC} 点 ${GREEN}保存${NC}"
+    echo ""
+    _info "✅ 保存成功后无需重启任何东西，cloudflared 自动 reload，客户端立即可用"
+    echo ""
 }
 
 # ============================================================

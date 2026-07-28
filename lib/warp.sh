@@ -3,7 +3,7 @@
 # warp.sh — WARP SOCKS5 代理模块
 # 使用 warp-plus 为 sing-box 提供全局 WARP 出口
 # ============================================================
-export WARP_MOD_VERSION="2.0.9"
+export WARP_MOD_VERSION="${PROJECT_VERSION}"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -208,6 +208,7 @@ _warp_add_dns_server() {
         --arg tag "$_WARP_DNS_TAG" \
         '{
             "tag": $tag,
+            "type": "https",
             "server": "https://1.1.1.1/dns-query",
             "detour": "warp-socks5"
         }')

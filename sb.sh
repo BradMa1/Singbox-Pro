@@ -12,9 +12,8 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.0.9"
+# SCRIPT_VERSION / PROJECT_VERSION 由 core.sh 统一定义（SSOT），加载模块后自动获取
 export SCRIPT_NAME="Singbox-Pro"
-# SB_VERSION 定义在 core.sh（SSOT），加载模块后自动获取
 
 # --- 路径定义 ---
 SELF_PATH="$(readlink -f "$0")"

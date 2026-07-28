@@ -3,7 +3,7 @@
 # ui.sh — Singbox-Pro 可视化菜单模块
 # 所有菜单、面板、状态显示集中管理
 # ============================================================
-export UI_MOD_VERSION="2.0.9"
+export UI_MOD_VERSION="${PROJECT_VERSION}"
 
 # --- 函数继承检测 ---
 if ! declare -f _info >/dev/null 2>&1; then
@@ -14,7 +14,7 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-SCRIPT_VERSION="${SCRIPT_VERSION:-2.0.9}"
+SCRIPT_VERSION="${SCRIPT_VERSION:-${PROJECT_VERSION}}"
 
 # ============================================================
 # 顶部横幅
@@ -99,13 +99,14 @@ _ui_main_menu() {
         echo -e "  ${CYAN}【系统维护】${NC}"
         echo -e "    ${GREEN}[12]${NC} 安装/更新核心    ${RED}[13]${NC} 卸载脚本"
         echo -e "    ${GREEN}[14]${NC} 健康检查          ${GREEN}[15]${NC} 升级脚本"
+        echo -e "    ${GREEN}[16]${NC} 节点分享(订阅+二维码)  ${GREEN}[17]${NC} 检查核心更新"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-15]: " choice
+        read -p "  请输入选项 [0-17]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -123,61 +124,12 @@ _ui_main_menu() {
             13) _ui_uninstall ;;
             14) _ui_health_check ;;
             15) _ui_upgrade_scripts ;;
+            16) _ui_subscription ;;
+            17) _ui_check_core_update ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
     done
-}
-
-# ============================================================
-# VPS 状态面板
-# ============================================================
-
-_ui_vps_panel() {
-    clear
-    echo -e "${CYAN}=== VPS 系统状态 ===${NC}"
-    echo ""
-
-    # CPU / 内存
-    echo -e "${CYAN}【系统资源】${NC}"
-    echo -e "  主机名: $(hostname)"
-    echo -e "  系统: $(_get_os_info)"
-    echo -e "  内核: $(uname -r)"
-    echo -e "  运行时间: $(uptime -p 2>/dev/null | sed 's/^up //' || uptime | awk -F'up' '{print $2}' | cut -d',' -f1)"
-    echo -e "  CPU: $(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d':' -f2 | xargs || echo '未知')"
-    echo -e "  内存: $(free -h 2>/dev/null | awk '/^Mem:/{print $3"/"$2}' || echo '未知')"
-    echo -e "  磁盘: $(df -h / 2>/dev/null | awk 'NR==2{print $3"/"$2" ("$5")"}' || echo '未知')"
-    echo ""
-
-    # 网络
-    echo -e "${CYAN}【网络】${NC}"
-    echo -e "  公网 IPv4: $(_get_public_ip)"
-    local ipv6=$(timeout 3 curl -s6 ifconfig.me 2>/dev/null || echo '无')
-    echo -e "  公网 IPv6: ${ipv6}"
-    echo ""
-
-    # 端口监听
-    echo -e "${CYAN}【端口监听】${NC}"
-    echo -e "  TCP:"
-    ss -tlnp 2>/dev/null | grep -v "127.0.0.1" | awk 'NR>1{printf "    :%-8s %s\n", $4, $NF}' | sed 's/.*://' | head -20 || echo "    无"
-    echo -e "  UDP:"
-    ss -ulnp 2>/dev/null | awk 'NR>1{printf "    :%-8s %s\n", $5, $NF}' | sed 's/.*://' | head -10 || echo "    无"
-    echo ""
-
-    # Sing-box 信息
-    echo -e "${CYAN}【Sing-box】${NC}"
-    echo -e "  版本: v$(_sb_get_version)"
-    echo -e "  状态: $(_sb_get_status)"
-    echo -e "  节点: $(_sb_get_inbound_count) 个"
-    echo ""
-
-    # 防火墙提示
-    echo -e "${YELLOW}【防火墙提示】${NC}"
-    echo -e "  如果节点不通，请检查 VPS 面板防火墙是否放行对应端口"
-    echo -e "  iptables: iptables -L INPUT -n --line-numbers"
-    echo ""
-
-    read -p "按回车键返回..."
 }
 
 # ============================================================
@@ -709,28 +661,7 @@ _ui_argo_add_fixed() {
     _sb_restart_and_verify
 
     echo ""
-    _warn "╔═══════════════════════════════════════════════════════════╗"
-    _warn "║  ⚠️  必读：固定隧道需要去 Dashboard 配 Service URL  ⚠️    ║"
-    _warn "╚═══════════════════════════════════════════════════════════╝"
-    _info "固定隧道路由由 Cloudflare 云端控制，脚本无法在本地设置"
-    _warn "如果你不做下面这步，小火箭会显示'超时'，隧道永远不通！"
-    echo ""
-    _info "📌 Dashboard 配置步骤（一步一步来，不要漏）:"
-    _info "  ${CYAN}①${NC} 浏览器打开 ${GREEN}https://one.dash.cloudflare.com/${NC}"
-    _info "  ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels${NC}"
-    _info "  ${CYAN}③${NC} 找到隧道名里含 ${YELLOW}${port}${NC} 的那个，点它"
-    _info "  ${CYAN}④${NC} 切到 ${GREEN}Public Hostname${NC} 标签页"
-    _info "  ${CYAN}⑤${NC} 找到域名 ${YELLOW}${tunnel_domain}${NC} 那行，点右侧 ${GREEN}编辑${NC}"
-    _info "  ${CYAN}⑥${NC} Service 这一栏："
-    _info "      Type 改为: ${RED}HTTP${NC}"
-    _info "      URL  改为: ${RED}http://127.0.0.1:${port}${NC}"
-    _info "      ⚠️ http 不能写成 https！"
-    _info "      ⚠️ 127.0.0.1 不能写成 localhost！"
-    _info "      ⚠️ Path 必须留空（不要填任何东西，包括 */blog）"
-    _info "  ${CYAN}⑦${NC} 点 ${GREEN}保存${NC}"
-    echo ""
-    _info "✅ 保存成功后无需重启任何东西，cloudflared 自动 reload，客户端立即可用"
-    echo ""
+    _argo_dashboard_hint "$port" "$tunnel_domain"
 
     _argo_start_fixed "$port" "$token" || {
         _proto_remove_inbound "$tag"
@@ -931,31 +862,14 @@ _ui_argo_temp_to_fixed() {
     # 启动固定隧道
     _argo_start_fixed "$convert_port" "$token" || { read -p "按回车键返回..."; return; }
 
-    # 更新元数据
-    _atomic_modify_json "$ARGO_METADATA_FILE" ".\"$convert_tag\".type = \"fixed\" | .\"$convert_tag\".domain = \"$tunnel_domain\" | .\"$convert_tag\".token = \"$token\""
+    # 更新元数据（token 仅存掩码，真实 token 在 ${SINGBOX_DIR}/argo/${convert_port}.token，600 权限）
+    local token_disp=""
+    [ -n "$token" ] && token_disp="${token:0:20}***"
+    _atomic_modify_json "$ARGO_METADATA_FILE" ".\"$convert_tag\".type = \"fixed\" | .\"$convert_tag\".domain = \"$tunnel_domain\" | .\"$convert_tag\".token = \"$token_disp\""
 
     _success "临时隧道已转换为固定隧道: ${tunnel_domain}"
     echo ""
-    _warn "╔═══════════════════════════════════════════════════════════╗"
-    _warn "║  ⚠️  必读：固定隧道需要去 Dashboard 配 Service URL  ⚠️    ║"
-    _warn "╚═══════════════════════════════════════════════════════════╝"
-    _info "转换完成 ≠ 立即可用！固定隧道路由由 Cloudflare 云端控制"
-    _warn "如果你不做下面这步，小火箭会显示'超时'，隧道永远不通！"
-    echo ""
-    _info "📌 Dashboard 配置步骤:"
-    _info "  ${CYAN}①${NC} 浏览器打开 ${GREEN}https://one.dash.cloudflare.com/${NC}"
-    _info "  ${CYAN}②${NC} 左侧 ${GREEN}Networks → Tunnels${NC}"
-    _info "  ${CYAN}③${NC} 找到隧道名里含 ${YELLOW}${convert_port}${NC} 的那个，点它"
-    _info "  ${CYAN}④${NC} 切到 ${GREEN}Public Hostname${NC} 标签页"
-    _info "  ${CYAN}⑤${NC} 找到域名 ${YELLOW}${tunnel_domain}${NC} 那行，点右侧 ${GREEN}编辑${NC}"
-    _info "  ${CYAN}⑥${NC} Service 这一栏："
-    _info "      Type 改为: ${RED}HTTP${NC}"
-    _info "      URL  改为: ${RED}http://127.0.0.1:${convert_port}${NC}"
-    _info "      ⚠️ http 不能写成 https！"
-    _info "      ⚠️ 127.0.0.1 不能写成 localhost！"
-    _info "      ⚠️ Path 必须留空"
-    _info "  ${CYAN}⑦${NC} 点 ${GREEN}保存${NC}"
-    echo ""
+    _argo_dashboard_hint "$convert_port" "$tunnel_domain"
     read -p "按回车键返回..."
 }
 
@@ -1357,6 +1271,133 @@ _ui_view_nodes() {
     read -p "按回车键返回..."
 }
 
+# ============================================================
+# 节点分享：订阅链接 + 二维码
+# ============================================================
+
+_ui_subscription() {
+    _require_singbox || return 1
+    _ensure_node_metadata_names
+
+    clear
+    echo -e "${CYAN}=== 节点分享（订阅 + 二维码）===${NC}"
+    echo ""
+
+    local server_ip=$(_get_public_ip)
+    echo -e "服务器 IP: ${GREEN}${server_ip}${NC}"
+    [ -n "${SERVER_DOMAIN:-}" ] && echo -e "服务器域名: ${GREEN}${SERVER_DOMAIN}${NC}"
+    echo ""
+
+    # 收集所有节点 URI
+    local -a node_names=()
+    local -a node_uris=()
+    local count=0
+    while IFS= read -r line; do
+        local tag=$(echo "$line" | jq -r .tag)
+        local type=$(echo "$line" | jq -r .type)
+        local port=$(echo "$line" | jq -r .listen_port)
+
+        count=$((count + 1))
+        local name="${type}-${port}"
+        if [ -f "$METADATA_FILE" ]; then
+            local meta_name=$(jq -r ".protocols.\"$tag\".name // empty" "$METADATA_FILE" 2>/dev/null)
+            [ -n "$meta_name" ] && name="$meta_name"
+        fi
+        node_names+=("$name")
+
+        local uri=""
+        case "$type" in
+            vless)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
+                local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
+                local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
+                ;;
+            anytls)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                uri=$(_proto_anytls_uri "$pw" "$server_ip" "$port" "$name")
+                ;;
+            tuic)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                uri=$(_proto_tuic_uri "$uuid" "$pw" "$server_ip" "$port" "$name")
+                ;;
+            hysteria2)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                uri=$(_proto_hy2_uri "$pw" "$server_ip" "$port" "$name")
+                ;;
+            vmess)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                uri=$(_proto_vmess_ws_standard_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+                ;;
+        esac
+        [ -n "$uri" ] && node_uris+=("$uri")
+    done < <(_proto_list_inbounds 2>/dev/null)
+
+    if [ "$count" -eq 0 ]; then
+        echo "  暂无节点，请先添加节点（菜单 [1]）"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+
+    # 生成订阅内容（base64 编码，标准订阅格式：每行一个 URI）
+    local sub_content=""
+    local i
+    for i in "${!node_uris[@]}"; do
+        [ -n "$sub_content" ] && sub_content="${sub_content}"$'\n'
+        sub_content="${sub_content}${node_uris[$i]}"
+    done
+    local sub_b64=$(printf '%s' "$sub_content" | base64 -w0 2>/dev/null || printf '%s' "$sub_content" | base64 | tr -d '\n')
+
+    echo -e "${CYAN}【订阅链接】（复制整段，导入 v2rayN / 小火箭 / Clash 等客户端的「订阅」）${NC}"
+    echo -e "${GREEN}${sub_b64}${NC}"
+    echo ""
+    echo -e "${YELLOW}提示: 订阅链接一次性包含所有节点，客户端更新订阅即可同步增删。${NC}"
+    echo ""
+
+    # 二维码：移动端扫码导入单节点
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "${CYAN}【二维码】输入节点编号可在终端显示该节点的扫码二维码${NC}"
+        echo -e "  节点列表:"
+        local j
+        for j in "${!node_names[@]}"; do
+            echo -e "    ${GREEN}[$((j+1))]${NC} ${node_names[$j]}"
+        done
+        echo ""
+        read -p "  显示哪个节点的二维码 (0 返回): " qr_choice
+        if [[ "$qr_choice" =~ ^[0-9]+$ ]] && [ "$qr_choice" -ge 1 ] && [ "$qr_choice" -le "${#node_uris[@]}" ]; then
+            local qidx=$((qr_choice - 1))
+            echo ""
+            echo -e "${CYAN}扫码导入: ${node_names[$qidx]}${NC}"
+            qrencode -t ANSIUTF8 "${node_uris[$qidx]}"
+            echo ""
+        fi
+    else
+        echo -e "${YELLOW}【二维码】未安装 qrencode，无法显示终端二维码。${NC}"
+        echo -e "  安装: ${GREEN}apt-get install -y qrencode${NC} (Debian/Ubuntu) 或 ${GREEN}pkg install qrencode${NC} (FreeBSD)"
+        echo ""
+    fi
+
+    read -p "按回车键返回..."
+}
+
+# ============================================================
+# 检查 sing-box 核心更新
+# ============================================================
+
+_ui_check_core_update() {
+    clear
+    echo -e "${CYAN}=== 检查 sing-box 核心更新 ===${NC}"
+    echo ""
+    _sb_check_core_update
+    echo ""
+    read -p "按回车键返回..."
+}
+
 _ui_delete_node() {
     _require_singbox || return 1
 
@@ -1506,18 +1547,19 @@ _ui_modify_node() {
             return
         fi
 
-        # 端口变化 → 自动更新名称（替换末尾的旧端口号）
+        # 端口变化 → 自动更新名称（只替换【末尾】的旧端口号后缀，避免误伤中间带数字的名称段）
         # 例如 VLESS-Reality-13190 → VLESS-Reality-13191
         # 或 RackNerd-美国黑五-vless-reality → RackNerd-美国黑五-vless-reality-13191
-        sel_name="${sel_name/%-[0-9]*/-${new_port}}"
-        # 如果名称不包含数字端口后缀，直接追加
+        # 用 % 后缀删除（锚定结尾），而非 ${var/pattern/repl} 的「首个出现」替换（会从第一个 -数字 一路删到末尾）
+        sel_name="${sel_name%-[0-9]*}-${new_port}"
+        # 若名称本不以 -数字 结尾（纯自定义名），上面不会删到任何东西，这里兜底追加 -新端口
         if ! echo "$sel_name" | grep -qE "[0-9]+$" && ! echo "$sel_name" | grep -qE "${new_port}$"; then
             sel_name="${sel_name}-${new_port}"
         fi
     fi
 
-    # 计算新 tag（tag 里嵌了端口）
-    local new_tag="${sel_tag/%-[0-9]*/-${new_port}}"
+    # 计算新 tag（tag 里嵌了端口，同样只替换末尾端口段）
+    local new_tag="${sel_tag%-[0-9]*}-${new_port}"
     if ! echo "$new_tag" | grep -qE "[0-9]+$" && ! echo "$new_tag" | grep -qE "${new_port}$"; then
         new_tag="${sel_tag}-${new_port}"
     fi
@@ -1577,25 +1619,6 @@ _ui_stop_service() {
     read -p "按回车键返回..."
 }
 
-_ui_view_status() {
-    _require_singbox || return 1
-    clear
-    _manage_service "status"
-    echo ""
-    read -p "按回车键返回..."
-}
-
-_ui_view_logs() {
-    clear
-    echo -e "${CYAN}=== 实时日志 (Ctrl+C 退出) ===${NC}"
-    echo ""
-    if [ -f /var/log/sing-box.log ]; then
-        tail -f /var/log/sing-box.log
-    else
-        journalctl -u sing-box -f --no-pager 2>/dev/null || _warn "未找到日志文件"
-    fi
-}
-
 # ============================================================
 # 核心更新
 # ============================================================
@@ -1616,51 +1639,6 @@ _ui_update_core() {
     _sb_restart_and_verify
 
     read -p "按回车键返回..."
-}
-
-# ============================================================
-# 证书管理
-# ============================================================
-
-_ui_cert_menu() {
-    while true; do
-        clear
-        echo -e "${CYAN}=== TLS 证书管理 ===${NC}"
-        echo ""
-
-        if [ -f "${SINGBOX_DIR}/cert.pem" ]; then
-            echo -e "  证书: ${GREEN}已安装${NC}"
-            local cert_expiry=$(openssl x509 -enddate -noout -in "${SINGBOX_DIR}/cert.pem" 2>/dev/null | cut -d'=' -f2)
-            [ -n "$cert_expiry" ] && echo -e "  过期: ${GREEN}${cert_expiry}${NC}"
-        else
-            echo -e "  证书: ${RED}未安装${NC}"
-        fi
-        echo ""
-
-        echo -e "    ${GREEN}[1]${NC} 生成自签名证书"
-        echo -e "    ${GREEN}[2]${NC} 查看证书详情"
-        echo ""
-        echo -e "    ${YELLOW}[0]${NC} 返回"
-        echo ""
-
-        read -p "  请输入选项 [0-2]: " cert_choice
-
-        case $cert_choice in
-            1) _proto_generate_cert; read -p "按回车键返回..." ;;
-            2)
-                clear
-                if [ -f "${SINGBOX_DIR}/cert.pem" ]; then
-                    openssl x509 -in "${SINGBOX_DIR}/cert.pem" -text -noout 2>/dev/null | head -20
-                else
-                    _warn "证书不存在"
-                fi
-                echo ""
-                read -p "按回车键返回..."
-                ;;
-            0) return ;;
-            *) _warn "无效选项"; sleep 1 ;;
-        esac
-    done
 }
 
 # ============================================================
