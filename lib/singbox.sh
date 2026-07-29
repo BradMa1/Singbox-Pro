@@ -516,6 +516,15 @@ _streaming_dns_set() {
         return 1
     fi
 
+    # 归一化: 若用户填了 'ip:port' (如 1.1.1.1:53), 拆成 server + server_port,
+    # 否则 1.13 会把整个 'ip:port' 当域名解析导致启动失败。纯 IP / IPv6 保持原样。
+    local dns_server="$addr" dns_port=""
+    if echo "$addr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$'; then
+        dns_server=$(echo "$addr" | cut -d: -f1)
+        dns_port=$(echo "$addr" | cut -d: -f2)
+        _info "检测到 'ip:port' 格式，已拆分为 server=$dns_server port=$dns_port"
+    fi
+
     _sb_backup_config
 
     # 先清理旧配置（避免重复）
@@ -526,8 +535,12 @@ _streaming_dns_set() {
         _atomic_modify_json "$CONFIG_FILE" 'del(.dns.rules[] | select(.server == "dns-streaming"))'
     fi
 
-    # 添加新的流媒体 DNS
-    _atomic_modify_json "$CONFIG_FILE" '.dns.servers += [{"tag":"dns-streaming","type":"udp","server":"'"$addr"'","detour":"proxy"}]'
+    # 添加新的流媒体 DNS (server 已归一化为纯 IP, 端口单独写 server_port)
+    local stream_json='{"tag":"dns-streaming","type":"udp","server":"'"$dns_server"'","detour":"proxy"}'
+    if [ -n "$dns_port" ]; then
+        stream_json=$(echo "$stream_json" | jq --argjson p "$dns_port" '. + {server_port: $p}')
+    fi
+    _atomic_modify_json "$CONFIG_FILE" ".dns.servers += [$stream_json]"
     _atomic_modify_json "$CONFIG_FILE" '.dns.rules += [{
         "domain_suffix": [
             "netflix.com", "nflxvideo.net", "nflxext.com",
