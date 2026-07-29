@@ -267,14 +267,35 @@ _sb_fix_legacy_dns() {
     local cfg="${1:-$CONFIG_FILE}"
     command -v jq >/dev/null 2>&1 || return 0
     [ -f "$cfg" ] || return 0
+    # 需要修复的判定:
+    #   - 旧字段 address / port 存在
+    #   - type 字段缺失 (老模板)
+    #   - 现代 server 字段里塞了 "ip:port" 字符串 (sing-box 1.13 不认, 会报
+    #     'missing domain resolver', 必须拆成 server + server_port)
+    # 注意: 合法的 server_port 字段【不算】 legacy, 不再把它拼回 server (旧逻辑 bug)
     local need
-    need=$(jq -r '[ (.dns.servers // [])[] | (.address != null or .server_port != null or (has("type")|not)) ] | any' "$cfg" 2>/dev/null)
+    need=$(jq -r '[ (.dns.servers // [])[] | (
+        (.address != null) or
+        (.port != null) or
+        (has("type") | not) or
+        ((.server | type) == "string" and ((.server | test(":")) and ((.server | startswith("http")) | not)))
+    ) ] | any' "$cfg" 2>/dev/null)
     [ "$need" = "true" ] || return 0
     cp "$cfg" "${cfg}.bak.$(date +%Y%m%d_%H%M%S)" 2>/dev/null
     if jq '
       .dns.servers |= map(
-        (if has("address") then (.server = .address | del(.address)) else . end)
-        | (if has("server_port") then (.server = (.server + ":" + (.server_port|tostring)) | del(.server_port)) else . end)
+        (if has("address")
+         then (
+           if (.address | type) == "string" and ((.address | test(":")) and ((.address | startswith("http")) | not))
+           then (.server_port = ((.address | split(":")[1] | tonumber)) | .server = (.address | split(":")[0]))
+           else (.server = .address)
+           end
+           | del(.address)
+         ) else . end)
+        | (if has("port") then (.server_port = (.port | tonumber)) | del(.port) else . end)
+        | (if (.server | type) == "string" and ((.server | test(":")) and ((.server | startswith("http")) | not))
+           then (.server_port = ((.server | split(":")[1] | tonumber)) | .server = (.server | split(":")[0]))
+           else . end)
         | (if (has("type") | not) then (.type = "udp") else . end)
       )
     ' "$cfg" > "${cfg}.tmp" 2>/dev/null && [ -s "${cfg}.tmp" ]; then
