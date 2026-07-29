@@ -1360,20 +1360,39 @@ _ui_subscription() {
     # 二维码：移动端扫码导入单节点
     if command -v qrencode >/dev/null 2>&1; then
         echo -e "${CYAN}【二维码】输入节点编号可在终端显示该节点的扫码二维码${NC}"
-        echo -e "  节点列表:"
+        echo -e "  ${YELLOW}支持单个 (如 2) 或多个空格分隔 (如 1 3 4)；输入 0 返回${NC}"
         local j
         for j in "${!node_names[@]}"; do
             echo -e "    ${GREEN}[$((j+1))]${NC} ${node_names[$j]}"
         done
         echo ""
-        read -p "  显示哪个节点的二维码 (0 返回): " qr_choice
-        if [[ "$qr_choice" =~ ^[0-9]+$ ]] && [ "$qr_choice" -ge 1 ] && [ "$qr_choice" -le "${#node_uris[@]}" ]; then
-            local qidx=$((qr_choice - 1))
-            echo ""
-            echo -e "${CYAN}扫码导入: ${node_names[$qidx]}${NC}"
-            qrencode -t ANSIUTF8 "${node_uris[$qidx]}"
-            echo ""
-        fi
+        # 最多重试 3 次, 避免无效输入直接静默返回
+        local tries=0 valid=0
+        while [ "$tries" -lt 3 ]; do
+            read -p "  显示二维码 (0 返回): " qr_choice
+            qr_choice=$(echo "$qr_choice" | tr -s ' ' | xargs)  # 去首尾/多余空格
+            [ -z "$qr_choice" ] && { tries=$((tries+1)); continue; }
+            if [ "$qr_choice" = "0" ]; then
+                break
+            fi
+            valid=1
+            local bad=0
+            for n in $qr_choice; do
+                if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "${#node_uris[@]}" ]; then
+                    _warn "无效编号: $n (有效范围 1-${#node_uris[@]})"
+                    bad=1
+                    continue
+                fi
+                local qidx=$((n - 1))
+                echo ""
+                echo -e "${CYAN}扫码导入: ${node_names[$qidx]}${NC}"
+                qrencode -t ANSIUTF8 "${node_uris[$qidx]}" || _warn "二维码生成失败 (qrencode 返回非零)"
+                echo ""
+            done
+            [ "$bad" -eq 0 ] && break
+            tries=$((tries+1))
+        done
+        [ "$valid" -eq 0 ] && echo -e "${YELLOW}(未选择节点)${NC}"
     else
         echo -e "${YELLOW}【二维码】未安装 qrencode，无法显示终端二维码。${NC}"
         echo -e "  安装: ${GREEN}apt-get install -y qrencode${NC} (Debian/Ubuntu) 或 ${GREEN}pkg install qrencode${NC} (FreeBSD)"
