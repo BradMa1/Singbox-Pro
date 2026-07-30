@@ -176,14 +176,13 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    # 注意: TUIC 链接**不能**带 allow_insecure=1 !
-    #   - allow_insecure 是 sing-box 内核 TUIC 专属字段(tls.insecure), mihomo/Shadowrocket
-    #     的 TUIC 结构体只有 skip-cert-verify, 根本没有 allow_insecure。该非标准参数会
-    #     干扰小火箭对 TUIC 版本的解析, 导致导入后默认回退 v4 (实际应为 v5) 而连不通。
-    #   - 自签证书跳过验证交给客户端自身开关: v2rayN(sing_box 模式)「跳过证书验证」+
-    #     Shadowrocket「允许不安全」, 两者用户均已开启, 可兜住。
-    #   - 故 TUIC 链接保持 TUIC v5 标准格式, 不塞 allow_insecure。
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3#${ep}"
+    # TUIC v5 标准 URI 参数 (tuic-project spec):
+    #   allow_insecure=1 是 TUIC v5 规范定义的「跳过证书验证」参数
+    #   - v2rayN(sing_box 内核): 识别 tls.insecure, 加了就不用手动开「跳过证书验证」
+    #   - 小火箭/mihomo: 忽略该参数或等同 skip-cert-verify (不会破坏 version=5 解析,
+    #     因为 version=5 已显式写出)
+    # 加上后可省去用户在 v2rayN 里手动勾选 skip cert 的步骤; 自签证书场景必备
+    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
 }
 
 # ============================================================
