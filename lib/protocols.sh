@@ -83,6 +83,31 @@ _proto_reality_uri() {
     echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
 }
 
+# 从 reality 私钥推导公钥 (X25519)。
+# 用途: 节点分享 fallback — 当 metadata.json 的 key 与 config tag 因外部改端口等原因
+# 不一致、导致按 tag 查不到 public_key 时, 直接从 config 的 reality inbound 私钥推导,
+# 避免生成的 vless:// 链接 pbk 为空 (v2rayN 导入后 Reality 握手失败 / 跳过测试)。
+# 依赖 python3 + cryptography; 不可用时返回空并告警 (不阻断其他节点)。
+_reality_pubkey_from_config() {
+    local priv="$1"
+    [ -z "$priv" ] && return 1
+    command -v python3 >/dev/null 2>&1 || { _warn "python3 不可用, 无法推导 reality 公钥"; return 1; }
+    local pub
+    pub=$(python3 - "$priv" <<'PYEOF' 2>/dev/null
+import base64, sys
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+priv = sys.argv[1]
+pad = (-len(priv)) % 4
+k = base64.urlsafe_b64decode(priv + '=' * pad)
+pk = X25519PrivateKey.from_private_bytes(k)
+raw = pk.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+print(base64.urlsafe_b64encode(raw).decode().rstrip('='))
+PYEOF
+)
+    [ -n "$pub" ] && echo "$pub"
+}
+
 # ============================================================
 # 2. AnyTLS
 # ============================================================

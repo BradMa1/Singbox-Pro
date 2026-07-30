@@ -1311,6 +1311,13 @@ _ui_subscription() {
                 local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
                 local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
                 local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                # fallback: metadata key 与 config tag 不一致 (如外部改端口) 时,
+                # 直接从 config 的 reality 私钥推导公钥, 避免 pbk 为空导致链接失效
+                if [ -z "$pbk" ]; then
+                    local priv=$(echo "$line" | jq -r '.tls.reality.private_key // empty')
+                    [ -n "$priv" ] && pbk=$(_reality_pubkey_from_config "$priv")
+                    [ -z "$pbk" ] && _warn "节点 $tag 无法获取 Reality 公钥 (metadata 缺失且私钥推导失败), 该 VLESS 链接将缺 pbk"
+                fi
                 uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
                 ;;
             anytls)
