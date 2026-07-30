@@ -94,12 +94,12 @@ _sb_generate_config() {
             {
                 "type": "udp",
                 "tag": "dns-local",
-                "server": "223.5.5.5"
+                "server": "119.29.29.29"
             },
             {
                 "type": "udp",
                 "tag": "dns-remote",
-                "server": "8.8.8.8"
+                "server": "1.1.1.1"
             }
         ],
         "rules": [
@@ -365,6 +365,114 @@ _require_singbox() {
     return 0
 }
 
+# --- 检测并提示升级老证书/老 DNS（v2.1.0 引入）---
+# 背景 (2026-07-30): 修复 DNS 污染 (8.8.8.8 → 1.1.1.1) + 证书缺 SAN
+#   - 老用户 cert.pem 没有 SAN, TUIC/AnyTLS/Hysteria2 现代客户端会报
+#     'certificate is not standards compliant' → 协议握手失败
+#   - 老用户 dns-remote 还是 8.8.8.8, 在香港/亚洲部分网络被污染返回 Twitter/Facebook IP
+# 新装用户已是新版本, 无需提示。
+_sb_check_legacy_config() {
+    local issues=""
+
+    # 1. 检测证书 SAN（兼容 LibreSSL/OpenSSL：用 -text 解析）
+    if [ -f "$SINGBOX_DIR/cert.pem" ]; then
+        local san=$(openssl x509 -in "$SINGBOX_DIR/cert.pem" -noout -text 2>/dev/null \
+                    | grep -A1 "Subject Alternative Name" | tail -1)
+        [ -z "$san" ] && issues="${issues}cert"
+    fi
+
+    # 2. 检测老 DNS
+    if [ -f "$CONFIG_FILE" ]; then
+        local old_dns=$(jq -r '
+            (.dns.servers[]? | select(.tag=="dns-remote") | .server) as $r |
+            (.dns.servers[]? | select(.tag=="dns-local") | .server) as $l |
+            if ($r == "8.8.8.8" or $l == "223.5.5.5") then "yes" else "no" end
+        ' "$CONFIG_FILE" 2>/dev/null)
+        [ "$old_dns" = "yes" ] && issues="${issues}dns"
+    fi
+
+    [ -z "$issues" ] && return 0
+
+    echo ""
+    echo -e "${YELLOW}╭─────────────────────────────────────────────────╮${NC}"
+    echo -e "${YELLOW}│  ${NC}检测到配置可优化 (${CYAN}v2.1.0${NC} 修复)               ${YELLOW}│${NC}"
+    echo -e "${YELLOW}╰─────────────────────────────────────────────────╯${NC}"
+    [[ "$issues" == *cert* ]] && echo -e "  ${YELLOW}●${NC} 证书缺 SAN — TUIC/AnyTLS/Hysteria2 在 v2rayN 6.x+ 等严格 TLS 客户端会握手失败"
+    [[ "$issues" == *dns* ]] && echo -e "  ${YELLOW}●${NC} DNS 仍用 8.8.8.8/223.5.5.5 — 在部分 ISP 网络被污染导致代理超时"
+    echo ""
+    echo -e "  推荐执行: ${GREEN}sb upgrade-config${NC}  一键升级证书 + DNS"
+    echo ""
+    read -p "  是否立即升级？[y/N] " ans
+    if [[ "$ans" =~ ^[Yy]$ ]]; then
+        _sb_upgrade_legacy_config "$issues"
+    else
+        echo -e "  ${CYAN}[提示]${NC} 稍后可用 ${GREEN}sb upgrade-config${NC} 手动触发"
+    fi
+}
+
+# --- 执行老配置升级（被 _sb_check_legacy_config 调用 / sb upgrade-config 触发）---
+_sb_upgrade_legacy_config() {
+    local issues="${1:-}"
+    [ -z "$issues" ] && {
+        # 主动调用时自动检测
+        issues=""
+        if [ -f "$SINGBOX_DIR/cert.pem" ]; then
+            local san=$(openssl x509 -in "$SINGBOX_DIR/cert.pem" -noout -text 2>/dev/null \
+                        | grep -A1 "Subject Alternative Name" | tail -1)
+            [ -z "$san" ] && issues="${issues}cert"
+        fi
+        if [ -f "$CONFIG_FILE" ]; then
+            local old_dns=$(jq -r '
+                (.dns.servers[]? | select(.tag=="dns-remote") | .server) as $r |
+                (.dns.servers[]? | select(.tag=="dns-local") | .server) as $l |
+                if ($r == "8.8.8.8" or $l == "223.5.5.5") then "yes" else "no" end
+            ' "$CONFIG_FILE" 2>/dev/null)
+            [ "$old_dns" = "yes" ] && issues="${issues}dns"
+        fi
+    }
+    [ -z "$issues" ] && { _info "无需升级"; return 0; }
+
+    _sb_backup_config
+    local restarted=0
+
+    # 1. 重新生成证书（含 SAN）
+    if [[ "$issues" == *cert* ]]; then
+        local ts=$(date +%s)
+        if [ -f "$SINGBOX_DIR/cert.pem" ]; then
+            mv "$SINGBOX_DIR/cert.pem" "$SINGBOX_DIR/cert.pem.bak.$ts"
+            _info "旧证书已备份: cert.pem.bak.$ts"
+        fi
+        if [ -f "$SINGBOX_DIR/key.pem" ]; then
+            mv "$SINGBOX_DIR/key.pem" "$SINGBOX_DIR/key.pem.bak.$ts"
+            _info "旧私钥已备份: key.pem.bak.$ts"
+        fi
+        openssl req -x509 -newkey rsa:2048 -keyout "$SINGBOX_DIR/key.pem" \
+            -out "$SINGBOX_DIR/cert.pem" -days 3650 -nodes \
+            -subj "/CN=sing-box-pro" \
+            -addext "subjectAltName=DNS:sing-box-pro,DNS:localhost,IP:127.0.0.1" 2>/dev/null
+        chmod 644 "$SINGBOX_DIR/cert.pem" "$SINGBOX_DIR/key.pem"
+        _success "证书已重新生成（含 SAN）"
+        restarted=1
+    fi
+
+    # 2. 替换老 DNS
+    if [[ "$issues" == *dns* ]]; then
+        _atomic_modify_json "$CONFIG_FILE" '
+            (.dns.servers[] | select(.tag == "dns-local") | .server) = "119.29.29.29" |
+            (.dns.servers[] | select(.tag == "dns-remote") | .server) = "1.1.1.1"
+        '
+        _success "DNS 已升级: dns-local=119.29.29.29, dns-remote=1.1.1.1"
+        restarted=1
+    fi
+
+    if [ "$restarted" -eq 1 ]; then
+        _sb_restart_and_verify
+        echo ""
+        _warn "⚠️  证书已更换 — 所有 TLS 协议节点的 share link 已失效"
+        _warn "    请重新分享节点获取新链接（旧链接握手会失败）"
+    fi
+}
+
 # --- 获取 sing-box 版本 ---
 _sb_get_version() {
     if [ -f "$SINGBOX_BIN" ]; then
@@ -471,27 +579,34 @@ _dns_ipv6_enable() {
     [ -z "$ipv6" ] && { _error "本机无 IPv6 地址，无法启用"; return 1; }
 
     _sb_backup_config
+    # 修复 (2026-07-30): IPv6 DNS 用 Cloudflare DoH 而非 2001:4860:4860::8888 (Google),
+    # 后者在部分地区被污染。DoH 走 https 抗污染能力强。
     _atomic_modify_json "$CONFIG_FILE" '
         .dns.strategy = "prefer_ipv6" |
         (.dns.servers[] | select(.tag == "dns-local") | .server) = "2400:3200::1" |
-        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "2001:4860:4860::8888"
+        (.dns.servers[] | select(.tag == "dns-remote") | .type) = "https" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "1.1.1.1" |
+        del(.dns.servers[] | select(.tag == "dns-remote") | .server_port)
     '
     touch "$IPV6_DNS_STATE"
     _sb_restart_and_verify
-    _success "IPv6 DNS 优先已启用 — 出站连接将优先使用 IPv6"
+    _success "IPv6 DNS 优先已启用 — 出站连接将优先使用 IPv6 (dns-remote 切 DoH)"
 }
 
 # --- 禁用 IPv6 DNS ---
 _dns_ipv6_disable() {
     _sb_backup_config
+    # 修复 (2026-07-30): dns-remote 恢复为 1.1.1.1 而非 8.8.8.8 (8.8.8.8 在多网络下被污染)
     _atomic_modify_json "$CONFIG_FILE" '
         .dns.strategy = "prefer_ipv4" |
-        (.dns.servers[] | select(.tag == "dns-local") | .server) = "223.5.5.5" |
-        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "8.8.8.8"
+        (.dns.servers[] | select(.tag == "dns-local") | .server) = "119.29.29.29" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .type) = "udp" |
+        (.dns.servers[] | select(.tag == "dns-remote") | .server) = "1.1.1.1" |
+        del(.dns.servers[] | select(.tag == "dns-remote") | .server_port)
     '
     rm -f "$IPV6_DNS_STATE"
     _sb_restart_and_verify
-    _success "已恢复 IPv4 DNS 优先"
+    _success "已恢复 IPv4 DNS 优先 (1.1.1.1 / 119.29.29.29)"
 }
 
 # --- 流媒体 DNS 状态 ---

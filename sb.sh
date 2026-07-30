@@ -134,6 +134,13 @@ main() {
             _sb_upgrade_scripts
             ;;
 
+        upgrade-config)
+            # v2.1.0 新增：一键升级老证书(无SAN)+ 老 DNS(8.8.8.8/223.5.5.5)
+            _check_deps
+            _load_modules
+            _sb_upgrade_legacy_config
+            ;;
+
         health)
             _check_deps
             _load_modules
@@ -159,6 +166,7 @@ main() {
             echo "  stop        停止 sing-box 服务"
             echo "  log         查看实时日志"
             echo "  upgrade     升级管理脚本到最新版"
+            echo "  upgrade-config  升级老证书/SAN + 老 DNS (8.8.8.8→1.1.1.1)"
             echo "  backup      备份配置"
             echo "  help        显示此帮助"
             ;;
@@ -184,6 +192,8 @@ main() {
             fi
 
             # 启动主菜单
+            # 检测老证书/老 DNS（v2.1.0 引入），给老用户升级提示
+            _sb_check_legacy_config
             _ui_main_menu
             ;;
     esac

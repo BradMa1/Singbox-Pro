@@ -332,12 +332,16 @@ _proto_generate_cert() {
     fi
 
     _info "正在生成自签名 TLS 证书..."
+    # 修复 (2026-07-30): 加 -addext subjectAltName=...
+    # 现代 TLS 校验 (Go 1.18+ / Chromium / sing-box 1.10+) 要求证书必须有 SAN,
+    # 否则报 'certificate is not standards compliant' → TUIC/AnyTLS/Hysteria2 验证失败。
     openssl req -x509 -newkey rsa:2048 -keyout "${cert_dir}/key.pem" \
         -out "${cert_dir}/cert.pem" -days 3650 -nodes \
-        -subj "/CN=sing-box-pro" 2>/dev/null
+        -subj "/CN=sing-box-pro" \
+        -addext "subjectAltName=DNS:sing-box-pro,DNS:localhost,IP:127.0.0.1" 2>/dev/null
 
     if [ -f "${cert_dir}/cert.pem" ] && [ -f "${cert_dir}/key.pem" ]; then
-        _success "TLS 证书已生成"
+        _success "TLS 证书已生成（含 SAN，符合现代 TLS 校验）"
         return 0
     fi
 
