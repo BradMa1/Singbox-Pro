@@ -270,11 +270,15 @@ _proto_vmess_ws_uri() {
     local name="$5"
     local fp=$(_cert_sha256)
 
-    # VMess 标准 vmess:// 链接 (base64 json) 无法携带证书指纹, 故输出可直导入
-    # v2rayN / v2rayNG / NekoBox 的完整 Xray outbound 配置:
-    #   - security=tls 启用 TLS (服务端已配自签证书)
-    #   - tlsSettings.pinnedPeerCertificateChainSha256 固定证书(证书哈希, hex), 无需 allowInsecure
-    #   - Xray 2026-08-01 禁用 allowInsecure 后, 此配置仍可正常连接
+    # VMess 完整 Xray 配置 (v2rayN「从剪贴板导入」专用):
+    #   - security=tls + pinnedPeerCertificateChainSha256 固定证书 (Xray 核心用, 自签 CA 不被信任)
+    #   - allowInsecure=true 兼容 v2rayN sing_box 核心:
+    #       v2rayN 转换 Xray 配置到 sing-box 时, tlsSettings.pinnedPeerCertificateChainSha256
+    #       会被丢弃 (sing-box 原生 VMess 用 certificate_public_key_sha256, 字段名/编码都不同,
+    #       v2rayN 转换器不会换算), 没有 allowInsecure 时 sing_box 核心下自签证书校验必失败 -> -1
+    #       allowInsecure=true 会被转换为 sing-box tls.insecure, 跳过证书校验, 核心通用
+    #   - Xray 2026-08-01 后 allowInsecure=true 仍可用 (前提是同时配置 pinned 证书哈希,
+    #     即本配置同时含 pin + allowInsecure=true, 满足 Xray 8/1 例外条款)
     # 导入方式: 复制下面整段 JSON → v2rayN「设置 → 从剪贴板导入」
     jq -nc \
         --arg addr "$server_ip" \
@@ -301,7 +305,7 @@ _proto_vmess_ws_uri() {
                     tlsSettings: {
                         serverName: $sni,
                         pinnedPeerCertificateChainSha256: $fp,
-                        allowInsecure: false
+                        allowInsecure: true
                     }
                 }
             }]
