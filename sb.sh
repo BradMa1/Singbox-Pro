@@ -147,6 +147,13 @@ main() {
             _sb_health_check
             ;;
 
+        renew-cert)
+            # v2.1.3 新增：重生成证书并加入公网 IP 到 SAN (修复 TUIC/VMess 握手失败)
+            _check_deps
+            _load_modules
+            _sb_renew_cert
+            ;;
+
         install)
             # 在 VPS 上首次安装时调用
             echo "请使用 install.sh 进行首次部署:"
@@ -168,9 +175,10 @@ main() {
             echo "  restart     重启 sing-box 服务"
             echo "  stop        停止 sing-box 服务"
             echo "  log         查看实时日志"
-            echo "  upgrade     升级管理脚本到最新版"
-            echo "  upgrade-config  升级老证书/SAN + 老 DNS (8.8.8.8→1.1.1.1)"
-            echo "  backup      备份配置"
+    echo "  upgrade     升级管理脚本到最新版"
+    echo "  upgrade-config  升级老证书/SAN + 老 DNS (8.8.8.8→1.1.1.1)"
+    echo "  renew-cert  重生成证书并将公网 IP 加入 SAN (修复 TUIC/VMess 握手失败)"
+    echo "  backup      备份配置"
             echo "  help        显示此帮助"
             ;;
 

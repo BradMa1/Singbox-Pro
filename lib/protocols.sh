@@ -351,27 +351,50 @@ _proto_vmess_ws_standard_uri() {
 _proto_generate_cert() {
     local cert_dir="$SINGBOX_DIR"
 
-    if [ -f "${cert_dir}/cert.pem" ] && [ -f "${cert_dir}/key.pem" ]; then
-        _info "TLS 证书已存在，跳过生成"
+    if [ "${1:-}" != "force" ] && [ -f "${cert_dir}/cert.pem" ] && [ -f "${cert_dir}/key.pem" ]; then
+        _info "TLS 证书已存在，跳过生成（如需更新 SAN 请用: sb renew-cert）"
         return 0
     fi
 
     _info "正在生成自签名 TLS 证书..."
-    # 修复 (2026-07-30): 加 -addext subjectAltName=...
-    # 现代 TLS 校验 (Go 1.18+ / Chromium / sing-box 1.10+) 要求证书必须有 SAN,
-    # 否则报 'certificate is not standards compliant' → TUIC/AnyTLS/Hysteria2 验证失败。
+    # SAN 必须包含公网 IP: TUIC / VMess 等依赖真实 TLS 校验的协议, 其分享链接
+    # 不能带 insecure=1 (TUIC 带会触发小火箭 v4 回退 bug; VMess 标准格式不支持),
+    # 只能靠证书 SAN 覆盖连接用的公网 IP 才能握手通过。仅含 127.0.0.1 会导致这两个协议失败。
+    local pub_ip=""
+    pub_ip=$(curl -s --max-time 8 icanhazip.com 2>/dev/null)
+    [ -z "$pub_ip" ] && pub_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    local san="DNS:sing-box-pro,DNS:localhost,IP:127.0.0.1"
+    [ -n "$pub_ip" ] && san="${san},IP:${pub_ip}"
     openssl req -x509 -newkey rsa:2048 -keyout "${cert_dir}/key.pem" \
         -out "${cert_dir}/cert.pem" -days 3650 -nodes \
         -subj "/CN=sing-box-pro" \
-        -addext "subjectAltName=DNS:sing-box-pro,DNS:localhost,IP:127.0.0.1" 2>/dev/null
+        -addext "subjectAltName=${san}" 2>/dev/null
 
     if [ -f "${cert_dir}/cert.pem" ] && [ -f "${cert_dir}/key.pem" ]; then
-        _success "TLS 证书已生成（含 SAN，符合现代 TLS 校验）"
+        _success "TLS 证书已生成（SAN: ${san}）"
         return 0
     fi
 
     _error "证书生成失败，请检查 openssl 是否安装"
     return 1
+}
+
+# 重生成证书: SAN 自动包含公网 IP (解决 TUIC/VMess 依赖真实 TLS 校验却无 SAN 覆盖公网 IP 的问题)
+_sb_renew_cert() {
+    _info "重生成 TLS 证书（SAN 将包含公网 IP）..."
+    _proto_generate_cert force || return 1
+    _info "重启 sing-box 使新证书生效..."
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl restart sing-box 2>/dev/null && sleep 2
+    elif command -v service >/dev/null 2>&1; then
+        service sing-box restart 2>/dev/null && sleep 2
+    fi
+    if systemctl is-active --quiet sing-box 2>/dev/null; then
+        _success "sing-box 已重启，新证书生效"
+    else
+        _warn "无法确认 sing-box 状态，请手动检查: systemctl status sing-box"
+    fi
+    _warn "⚠️ VMess 节点的 pinnedPeerCertificateChainSha256 已变化，请重新生成节点链接 (菜单[3]/[6]) 并重新导入客户端"
 }
 
 # ============================================================
