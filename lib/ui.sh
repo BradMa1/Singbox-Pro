@@ -147,7 +147,7 @@ _ui_add_node_menu() {
     echo -e "    ${GREEN}[2]${NC} AnyTLS            (轻量 TLS)"
     echo -e "    ${GREEN}[3]${NC} TUIC V5           (UDP + BBR 加速)"
     echo -e "    ${GREEN}[4]${NC} Hysteria2        (QUIC, 低延迟)"
-    echo -e "    ${GREEN}[5]${NC} VMess WebSocket   (兼容性强)"
+    echo -e "    ${GREEN}[5]${NC} VLESS WebSocket  (sing-box 1.11+ 原生, 替代已移除的 VMess)"
     echo ""
     echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3 5)，直接回车 = 全选${NC}"
     echo -e "    ${YELLOW}[0]${NC} 返回"
@@ -186,7 +186,7 @@ _ui_add_node_menu() {
     proto_names[2]="AnyTLS"
     proto_names[3]="TUIC V5"
     proto_names[4]="Hysteria2"
-    proto_names[5]="VMess WebSocket"
+    proto_names[5]="VLESS WebSocket"
 
     declare -A ports
     for ch in "${selected[@]}"; do
@@ -243,7 +243,7 @@ _ui_add_node_menu() {
             2) result=$(_ui_add_anytls_quick   "$port" "$name_prefix") ;;
             3) result=$(_ui_add_tuic_quick     "$port" "$name_prefix") ;;
             4) result=$(_ui_add_hy2_quick      "$port" "$name_prefix") ;;
-            5) result=$(_ui_add_vmess_ws_quick "$port" "$name_prefix") ;;
+            5) result=$(_ui_add_vless_ws_quick "$port" "$name_prefix") ;;
         esac
 
         [ -n "$result" ] && result_lines+=("$result")
@@ -305,6 +305,14 @@ _ui_add_node_menu() {
                 echo -e "    ${CYAN}↑ 标准 vmess:// — 导入小火箭 / 通用客户端 (自签需在客户端勾选「允许不安全」)${NC}"
                 echo -e "    ${GREEN}${full}${NC}"
                 echo -e "    ${YELLOW}↑ 完整 Xray 配置 — 复制整段粘贴到 v2rayN「设置 → 从剪贴板导入」(已固定证书, 8.1 安全)${NC}"
+                echo ""
+                ;;
+            vless-ws)
+                local uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$server_ip" "$ws_path" "$name")
+                echo -e "  ${GREEN}● ${name}${NC} (VLESS WS)"
+                echo -e "    端口: ${port}  路径: ${ws_path}"
+                echo -e "    ${GREEN}${uri}${NC}"
+                echo -e "    ${YELLOW}↑ VLESS over WebSocket + TLS (sing-box 1.11+ 原生, 替代已移除的 VMess)${NC}"
                 echo ""
                 ;;
         esac
@@ -448,12 +456,12 @@ _ui_add_hy2_quick() {
     echo "hy2|${name}|${port}||||${password}||"
 }
 
-_ui_add_vmess_ws_quick() {
+_ui_add_vless_ws_quick() {
     local port=$1
     local name_prefix=$2
 
     if _check_port_occupied "$port" "tcp"; then
-        _error "端口 ${port} 已被占用，跳过 VMess"
+        _error "端口 ${port} 已被占用，跳过 VLESS-WS"
         return 1
     fi
 
@@ -461,23 +469,23 @@ _ui_add_vmess_ws_quick() {
     local ws_path="/$(_random_hex 8)"
 
     local name
-    [ -n "$name_prefix" ] && name="${name_prefix}-vmess-ws" || name="VMess-WS-${port}"
+    [ -n "$name_prefix" ] && name="${name_prefix}-vless-ws" || name="VLESS-WS-${port}"
 
-    local inbound_json=$(_proto_vmess_ws_config "$port" "$uuid" "$ws_path")
+    local inbound_json=$(_proto_vless_ws_config "$port" "$uuid" "$ws_path")
     _proto_add_inbound "$inbound_json" || return 1
 
     local meta_json=$(jq -n \
-        --arg tag "vmess-ws-${port}" \
+        --arg tag "vless-ws-${port}" \
         --arg name "$name" \
         --arg uuid "$uuid" \
         --arg ws_path "$ws_path" \
         --arg port "$port" \
         --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
-        '{($tag): {name: $name, type: "vmess-ws", uuid: $uuid, ws_path: $ws_path, port: ($port|tonumber), created_at: $created}}')
+        '{($tag): {name: $name, type: "vless-ws", uuid: $uuid, ws_path: $ws_path, port: ($port|tonumber), created_at: $created}}')
     [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
     _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
-    echo "vmess|${name}|${port}|${uuid}||||${ws_path}"
+    echo "vless-ws|${name}|${port}|${uuid}||||${ws_path}"
 }
 
 # ============================================================
@@ -1171,7 +1179,7 @@ _ensure_node_metadata_names() {
             ($in.type) as $type |
             (if (.protocols[$tag].name // "") != "" then . else
                 (.protocols[$tag].name = ($prefix + "-" + (
-                    if $type == "vless" then "vless-reality"
+                    if $type == "vless" then (if ($in.tls.reality != null and $in.tls.reality != {}) then "vless-reality" else "vless-ws" end)
                     elif $type == "anytls" then "anytls"
                     elif $type == "tuic" then "tuic"
                     elif $type == "hysteria2" then "hy2"
@@ -1228,18 +1236,27 @@ _ui_view_nodes() {
         case "$type" in
             vless)
                 local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
-                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
-                local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
-                local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
-                local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
-                # fallback: metadata key 与 config tag 不一致 (如外部改端口) 时,
-                # 直接从 config 的 reality 私钥推导公钥, 避免 pbk 为空导致链接失效
-                if [ -z "$pbk" ]; then
-                    local priv=$(echo "$line" | jq -r '.tls.reality.private_key // empty')
-                    [ -n "$priv" ] && pbk=$(_reality_pubkey_from_config "$priv")
-                    [ -z "$pbk" ] && _warn "节点 $tag 无法获取 Reality 公钥 (metadata 缺失且私钥推导失败), 该 VLESS 链接将缺 pbk"
+                # 区分 VLESS-Reality (tls.reality 存在) 与 VLESS-WS (普通 TLS + transport.ws)
+                local is_reality=$(echo "$line" | jq -r '(.tls.reality != null) and (.tls.reality != {})' 2>/dev/null)
+                if [ "$is_reality" = "true" ]; then
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
+                    local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
+                    local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                    # fallback: metadata key 与 config tag 不一致 (如外部改端口) 时,
+                    # 直接从 config 的 reality 私钥推导公钥, 避免 pbk 为空导致链接失效
+                    if [ -z "$pbk" ]; then
+                        local priv=$(echo "$line" | jq -r '.tls.reality.private_key // empty')
+                        [ -n "$priv" ] && pbk=$(_reality_pubkey_from_config "$priv")
+                        [ -z "$pbk" ] && _warn "节点 $tag 无法获取 Reality 公钥 (metadata 缺失且私钥推导失败), 该 VLESS 链接将缺 pbk"
+                    fi
+                    uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
+                else
+                    # VLESS-WS: 普通 TLS + WebSocket, 不需要 pbk/sid
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name")
                 fi
-                local uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
                 echo -e "      链接: ${GREEN}${uri}${NC}"
                 ;;
             anytls)
@@ -1314,18 +1331,23 @@ _ui_subscription() {
         case "$type" in
             vless)
                 local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
-                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
-                local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
-                local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
-                local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
-                # fallback: metadata key 与 config tag 不一致 (如外部改端口) 时,
-                # 直接从 config 的 reality 私钥推导公钥, 避免 pbk 为空导致链接失效
-                if [ -z "$pbk" ]; then
-                    local priv=$(echo "$line" | jq -r '.tls.reality.private_key // empty')
-                    [ -n "$priv" ] && pbk=$(_reality_pubkey_from_config "$priv")
-                    [ -z "$pbk" ] && _warn "节点 $tag 无法获取 Reality 公钥 (metadata 缺失且私钥推导失败), 该 VLESS 链接将缺 pbk"
+                local is_reality=$(echo "$line" | jq -r '(.tls.reality != null) and (.tls.reality != {})' 2>/dev/null)
+                if [ "$is_reality" = "true" ]; then
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
+                    local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
+                    local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                    if [ -z "$pbk" ]; then
+                        local priv=$(echo "$line" | jq -r '.tls.reality.private_key // empty')
+                        [ -n "$priv" ] && pbk=$(_reality_pubkey_from_config "$priv")
+                        [ -z "$pbk" ] && _warn "节点 $tag 无法获取 Reality 公钥 (metadata 缺失且私钥推导失败), 该 VLESS 链接将缺 pbk"
+                    fi
+                    uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
+                else
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name")
                 fi
-                uri=$(_proto_reality_uri "$uuid" "$server_ip" "$port" "${sni:-$DEFAULT_SNI}" "$sid" "$name" "$flow" "$pbk")
                 ;;
             anytls)
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')

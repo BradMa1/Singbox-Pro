@@ -83,6 +83,18 @@ _proto_reality_uri() {
     echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
 }
 
+# VLESS over WebSocket + TLS 链接 (sing-box 1.11+ 原生支持, 替代已移除的 VMess)
+# 与 Reality 不同: 用普通 TLS (证书 SAN 需含公网 IP, _proto_generate_cert 已处理),
+# 不需要 pbk/sid。客户端 (v2rayN sing-box 核心) 信任证书或开跳过证书验证即可。
+_proto_vless_ws_uri() {
+    local uuid="$1" server_ip="$2" port="$3" sni="${4:-$server_ip}"
+    local ws_path="${5:-/ws}" name="$6"
+    local ep=$(_url_encode "$name")
+    local penc=$(_url_encode "$ws_path")
+    # insecure=1 跳过自签证书验证 (与 AnyTLS/TUIC/Hy2 一致, 仅 sing-box 核心; 纯 Xray 核心请用 VLESS-Reality)
+    echo -n "vless://${uuid}@${server_ip}:${port}?type=ws&security=tls&sni=${sni}&fp=chrome&path=${penc}&insecure=1#${ep}"
+}
+
 # 从 reality 私钥推导公钥 (X25519)。
 # 用途: 节点分享 fallback — 当 metadata.json 的 key 与 config tag 因外部改端口等原因
 # 不一致、导致按 tag 查不到 public_key 时, 直接从 config 的 reality inbound 私钥推导,
@@ -260,6 +272,35 @@ _proto_vmess_ws_config() {
         "path": "${ws_path}",
         "headers": {},
         "early_data_header_name": "Sec-WebSocket-Protocol"
+    }
+}
+EOF
+}
+
+# VLESS over WebSocket + TLS 服务端 inbound (sing-box 1.11+ 原生, 替代已移除的 VMess)
+# 注意: 不带 flow (xtls-rprx-vision 用于 reality/tcp, vless-ws 不需要)
+_proto_vless_ws_config() {
+    local port="$1" uuid="$2" ws_path="${3:-/ws}"
+
+    [[ ! "$ws_path" == /* ]] && ws_path="/${ws_path}"
+
+    cat << EOF
+{
+    "type": "vless",
+    "tag": "vless-ws-${port}",
+    "listen": "::",
+    "listen_port": ${port},
+    "users": [
+        { "uuid": "${uuid}" }
+    ],
+    "tls": {
+        "certificate_path": "${SINGBOX_DIR}/cert.pem",
+        "key_path": "${SINGBOX_DIR}/key.pem"
+    },
+    "transport": {
+        "type": "ws",
+        "path": "${ws_path}",
+        "headers": {}
     }
 }
 EOF
@@ -566,9 +607,13 @@ _proto_get_uri() {
             local password="$1"
             _proto_hy2_uri "$password" "$server_ip" "$port" "$name"
             ;;
-        vmess-ws)
+        vmess-ws|vless-ws)
             local uuid="$1" ws_path="${2:-/ws}"
-            _proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
+            if [ "$proto" = "vless-ws" ]; then
+                _proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
+            else
+                _proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
+            fi
             ;;
         *)
             _error "不支持的协议: $proto"
@@ -605,7 +650,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "  2. AnyTLS"
     echo "  3. TUIC V5         (UDP + BBR)"
     echo "  4. Hysteria2       (QUIC)"
-    echo "  5. VMess WebSocket (WS)"
+    echo "  5. VLESS WebSocket (WS, sing-box 1.11+ 原生, 替代已移除的 VMess)"
     echo ""
     if _sb_is_installed 2>/dev/null; then
         echo "已配置的入站:"
