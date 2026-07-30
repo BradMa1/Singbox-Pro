@@ -154,6 +154,9 @@ main() {
             ;;
 
         help|--help|-h)
+            # help 也需要 _load_modules 才能拿到 SCRIPT_VERSION (set -u 否则 unbound)
+            _check_deps
+            _load_modules
             echo "Singbox-Pro v${SCRIPT_VERSION} — 多协议代理管理面板"
             echo ""
             echo "用法: sb [命令]"
