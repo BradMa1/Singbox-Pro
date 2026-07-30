@@ -394,7 +394,53 @@ _sb_renew_cert() {
     else
         _warn "无法确认 sing-box 状态，请手动检查: systemctl status sing-box"
     fi
-    _warn "⚠️ VMess 节点的 pinnedPeerCertificateChainSha256 已变化，请重新生成节点链接 (菜单[3]/[6]) 并重新导入客户端"
+    # 自动打印 VMess 新链接(标准 vmess:// + v2rayN 完整 Xray 配置), 用户直接复制重导
+    # 这样证书重生成 → VMess pin 更新 一站式完成, 避免因旧 pin 导致 TLS 失败
+    _sb_print_vmess_links_after_renew
+}
+
+_sb_print_vmess_links_after_renew() {
+    local cfg="${SINGBOX_CFG:-/usr/local/etc/sing-box/config.json}"
+    [ -f "$cfg" ] || { _warn "未找到 $cfg, 跳过自动打印 VMess 链接"; return 0; }
+
+    local server_ip=$(_get_public_ip 2>/dev/null || hostname -I | awk '{print $1}')
+    [ -n "$server_ip" ] || { _warn "无法检测公网 IP, 跳过"; return 0; }
+
+    local new_fp=$(_cert_sha256)
+    local count=0
+    echo ""
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║  ⚠️  证书已重生成, VMess 节点的 pinnedPeerCertificateChainSha256 已变化  ║${NC}"
+    echo -e "${YELLOW}║  请用下方「新链接」覆盖 v2rayN 中的旧 VMess 节点 (旧 pin 已失效)       ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}新证书 pin (DER sha256, hex): ${GREEN}${new_fp}${NC}"
+    echo ""
+
+    while IFS= read -r line; do
+        local tag=$(echo "$line" | jq -r '.tag // empty')
+        local type=$(echo "$line" | jq -r '.type // empty')
+        local port=$(echo "$line" | jq -r '.listen_port // empty')
+        [ "$type" = "vmess" ] || continue
+        local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+        local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+        local name="$tag"
+        local std=$(_proto_vmess_ws_standard_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+        local full=$(_proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
+        echo -e "${GREEN}━━━ [$tag] ━━━${NC}"
+        echo -e "  标准 vmess:// (小火箭): ${std}"
+        echo -e "  完整 Xray 配置 (v2rayN): ${full}"
+        echo ""
+        count=$((count + 1))
+    done < <(jq -c '.inbounds[]? | select(.type=="vmess")' "$cfg" 2>/dev/null)
+
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}  (未发现 vmess inbound, 无需重导)${NC}"
+    else
+        echo -e "${CYAN}👉 复制「完整 Xray 配置」整段 JSON → v2rayN「设置 → 从剪贴板导入」覆盖旧节点${NC}"
+        echo -e "${CYAN}   或用「标准 vmess://」导入小火箭${NC}"
+    fi
+    echo ""
 }
 
 # ============================================================
