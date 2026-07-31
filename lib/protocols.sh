@@ -610,7 +610,9 @@ _proto_get_uri() {
         vmess-ws|vless-ws)
             local uuid="$1" ws_path="${2:-/ws}"
             if [ "$proto" = "vless-ws" ]; then
-                _proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
+                # 注意: _proto_vless_ws_uri 签名比 vmess 多一个 sni 参数 (第4位),
+                # 必须显式传 sni (默认=server_ip), 否则 ws_path/name 会整体错位一位
+                _proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$server_ip" "$ws_path" "$name"
             else
                 _proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
             fi
@@ -650,7 +652,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "  2. AnyTLS"
     echo "  3. TUIC V5         (UDP + BBR)"
     echo "  4. Hysteria2       (QUIC)"
-    echo "  5. VLESS WebSocket (WS, sing-box 1.11+ 原生, 替代已移除的 VMess)"
+    echo "  5. VLESS WebSocket (WS, 经 Argo 隧道使用, 不直接对外暴露)"
     echo ""
     if _sb_is_installed 2>/dev/null; then
         echo "已配置的入站:"

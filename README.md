@@ -10,7 +10,7 @@
 | AnyTLS | 新一代伪装协议 |
 | TUIC V5 | QUIC 协议，低延迟 |
 | Hysteria2 | UDP 加速，弱网友好 |
-| VMess WebSocket | WebSocket + TLS（自签证书，证书固定） |
+| VLESS-WS（经 Argo 隧道）| WebSocket + TLS，Cloudflare 前置，免直连暴露 |
 
 ## 一键安装
 
@@ -128,9 +128,11 @@ bash --version
 多协议自由组合，支持批量添加，安装时可选节点名称前缀。
 
 ```
-1) VLESS Reality   2) AnyTLS   3) TUIC V5
-4) Hysteria2       5) VMess WS
+1) VLESS Reality   2) AnyTLS   3) TUIC V5   4) Hysteria2
 ```
+
+> 直连节点默认 4 种协议。WebSocket（VLESS-WS）不在此菜单，仅通过 **Argo 隧道（菜单 2）** 经 Cloudflare 前置暴露——直连 WS 在部分带 L7 前端的 VPS / 网络出口会被按特征拦截，故默认不提供直连 WS 入口。
+
 
 ## Argo 隧道节点（菜单 2）
 

@@ -147,30 +147,29 @@ _ui_add_node_menu() {
     echo -e "    ${GREEN}[2]${NC} AnyTLS            (轻量 TLS)"
     echo -e "    ${GREEN}[3]${NC} TUIC V5           (UDP + BBR 加速)"
     echo -e "    ${GREEN}[4]${NC} Hysteria2        (QUIC, 低延迟)"
-    echo -e "    ${GREEN}[5]${NC} VLESS WebSocket  (sing-box 1.11+ 原生, 替代已移除的 VMess)"
     echo ""
-    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3 5)，直接回车 = 全选${NC}"
+    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3)，直接回车 = 默认 4 协议 (Reality/AnyTLS/TUIC/Hy2)${NC}"
     echo -e "    ${YELLOW}[0]${NC} 返回"
     echo ""
 
-    read -r -p "  请输入选项 [0-5]: " proto_choice
+    read -r -p "  请输入选项 [0-4]: " proto_choice
     proto_choice=$(echo "$proto_choice" | xargs 2>/dev/null)
-    [ -z "$proto_choice" ] && proto_choice="1 2 3 4 5"
+    [ -z "$proto_choice" ] && proto_choice="1 2 3 4"
 
     local selected=()
     for ch in $proto_choice; do
         case $ch in
-            1|2|3|4|5) selected+=("$ch") ;;
+            1|2|3|4) selected+=("$ch") ;;
             0) return ;;
             *) _warn "无效选项: $ch，跳过"; sleep 1 ;;
         esac
     done
     [ ${#selected[@]} -eq 0 ] && return
 
-    # ===== 证书预生成 (AnyTLS/TUIC/Hy2/VMess 需要) =====
+    # ===== 证书预生成 (AnyTLS/TUIC/Hy2 需要) =====
     local need_cert=false
     for ch in "${selected[@]}"; do
-        case $ch in 2|3|4|5) need_cert=true; break ;; esac
+        case $ch in 2|3|4) need_cert=true; break ;; esac
     done
     if $need_cert; then
         _proto_generate_cert || { read -p "按回车键返回..."; return; }
@@ -186,7 +185,6 @@ _ui_add_node_menu() {
     proto_names[2]="AnyTLS"
     proto_names[3]="TUIC V5"
     proto_names[4]="Hysteria2"
-    proto_names[5]="VLESS WebSocket"
 
     declare -A ports
     for ch in "${selected[@]}"; do
@@ -243,7 +241,6 @@ _ui_add_node_menu() {
             2) result=$(_ui_add_anytls_quick   "$port" "$name_prefix") ;;
             3) result=$(_ui_add_tuic_quick     "$port" "$name_prefix") ;;
             4) result=$(_ui_add_hy2_quick      "$port" "$name_prefix") ;;
-            5) result=$(_ui_add_vless_ws_quick "$port" "$name_prefix") ;;
         esac
 
         [ -n "$result" ] && result_lines+=("$result")
@@ -454,38 +451,6 @@ _ui_add_hy2_quick() {
     _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
     echo "hy2|${name}|${port}||||${password}||"
-}
-
-_ui_add_vless_ws_quick() {
-    local port=$1
-    local name_prefix=$2
-
-    if _check_port_occupied "$port" "tcp"; then
-        _error "端口 ${port} 已被占用，跳过 VLESS-WS"
-        return 1
-    fi
-
-    local uuid=$("$SINGBOX_BIN" generate uuid 2>/dev/null || _random_hex 16)
-    local ws_path="/$(_random_hex 8)"
-
-    local name
-    [ -n "$name_prefix" ] && name="${name_prefix}-vless-ws" || name="VLESS-WS-${port}"
-
-    local inbound_json=$(_proto_vless_ws_config "$port" "$uuid" "$ws_path")
-    _proto_add_inbound "$inbound_json" || return 1
-
-    local meta_json=$(jq -n \
-        --arg tag "vless-ws-${port}" \
-        --arg name "$name" \
-        --arg uuid "$uuid" \
-        --arg ws_path "$ws_path" \
-        --arg port "$port" \
-        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
-        '{($tag): {name: $name, type: "vless-ws", uuid: $uuid, ws_path: $ws_path, port: ($port|tonumber), created_at: $created}}')
-    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
-    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
-
-    echo "vless-ws|${name}|${port}|${uuid}||||${ws_path}"
 }
 
 # ============================================================
