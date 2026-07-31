@@ -375,7 +375,12 @@ _ui_add_node_menu() {
                 echo -e "  ${GREEN}● ${name}${NC} (Trojan)"
                 echo -e "    端口: ${port}  SNI: ${sni}  insecure=${insecure}"
                 echo -e "    ${GREEN}${uri}${NC}"
-                echo -e "    ${YELLOW}↑ Trojan over TLS, 真证书 HTTPS 外形 (路径放行); 自签场景需客户端 insecure=1${NC}"
+                if [ "${insecure:-1}" = "0" ]; then
+                    echo -e "    ${GREEN}↑ Trojan over TLS, 真证书 HTTPS 外形已激活 (路径放行, 客户端无需 insecure)${NC}"
+                else
+                    echo -e "    ${YELLOW}↑ 当前为自签证书: stealth 未激活, 与 vless-ws 同样会被 L7 拦截!${NC}"
+                    echo -e "    ${YELLOW}  运行 ${CYAN}sb cert issue <你的域名>${NC}${YELLOW} 升级真证书 (会自动重写本节点, insecure->0)${NC}"
+                fi
                 echo ""
                 ;;
             ss2022)

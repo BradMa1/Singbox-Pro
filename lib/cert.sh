@@ -202,6 +202,66 @@ _cert_trojan_paths() {
 }
 
 # ============================================================
+# 签发成功后重写已有 Trojan 节点 -> 真证书 (无需手动删节点重加)
+# ============================================================
+# 痛点: 用户常在「自签」阶段就添加了 Trojan 节点, 之后才 sb cert issue 签真证书;
+#   旧逻辑需手动删节点重加才能用上真证书。此处自动重写 config.json inbound
+#   (cert/key/server_name) 与 metadata (sni/insecure=0), 并重启 sing-box。
+# 参数: $1 域名
+_cert_rewrite_trojan_nodes() {
+    local domain="$1"
+    [ -z "$domain" ] && return 0
+    # 仅当 sing-box 配置/元数据可用时执行 (经 sb.sh 加载时必可用)
+    [ -z "${CONFIG_FILE:-}" ] || [ -z "${METADATA_FILE:-}" ] && {
+        _warn "CONFIG_FILE/METADATA_FILE 未设置, 跳过 Trojan 节点重写 (证书已签发, 不受影响)"
+        return 0
+    }
+    [ ! -f "$METADATA_FILE" ] && { _info "暂无节点元数据, 跳过 Trojan 重写"; return 0; }
+
+    local paths cert key
+    paths=$(_cert_acme_paths "$domain") || {
+        _warn "未找到域名 ${domain} 的 acme 证书, 跳过 Trojan 重写"
+        return 0
+    }
+    cert=$(echo "$paths" | awk '{print $1}')
+    key=$(echo "$paths" | awk '{print $2}')
+
+    # 找出所有 type=trojan 的节点 tag (与 inbound tag 一致: trojan-<port>)
+    local tags
+    tags=$(jq -r '.protocols // {} | to_entries[] | select(.value.type=="trojan") | .key' "$METADATA_FILE" 2>/dev/null)
+    [ -z "$tags" ] && { _info "无已有 Trojan 节点需切换真证书"; return 0; }
+
+    local count=0 tag
+    while IFS= read -r tag; do
+        [ -z "$tag" ] && continue
+        if _atomic_modify_json "$CONFIG_FILE" "
+            (.inbounds[] | select(.tag==\"$tag\") | .tls.certificate_path) = \"$cert\" |
+            (.inbounds[] | select(.tag==\"$tag\") | .tls.key_path) = \"$key\" |
+            (.inbounds[] | select(.tag==\"$tag\") | .tls.server_name) = \"$domain\"
+        " 2>/dev/null; then
+            _atomic_modify_json "$METADATA_FILE" "
+                (.protocols.\"$tag\".sni) = \"$domain\" |
+                (.protocols.\"$tag\".insecure) = \"0\"
+            " 2>/dev/null
+            _info "已重写 Trojan 节点 ${tag} -> 真证书 (${domain}, insecure=0)"
+            count=$((count+1))
+        else
+            _warn "重写 Trojan 节点 ${tag} 失败 (config.json 可能无该 inbound)"
+        fi
+    done <<< "$tags"
+
+    if [ "$count" -gt 0 ]; then
+        _info "正在重启 sing-box 以加载新证书..."
+        if _sb_restart_and_verify 2>/dev/null; then
+            _success "已自动将 ${count} 个 Trojan 节点切换到真证书, 客户端请改用新分享链接 (sni=${domain}, allowInsecure=0)"
+        else
+            _warn "证书已写入配置但重启失败, 请手动运行: sb restart"
+        fi
+    fi
+    return 0
+}
+
+# ============================================================
 # 元数据
 # ============================================================
 _cert_save_meta() {
@@ -228,7 +288,9 @@ _cert_cli() {
         issue)
             local domain="${1:-}" email="${2:-}"
             [ -z "$domain" ] && { _error "用法: sb cert issue <域名> [邮箱]"; return 1; }
-            _cert_acme_issue "$domain" "$email"
+            if _cert_acme_issue "$domain" "$email"; then
+                _cert_rewrite_trojan_nodes "$domain"
+            fi
             ;;
         renew)
             _cert_acme_renew "${1:-}"
