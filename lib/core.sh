@@ -5,7 +5,7 @@
 # ============================================================
 # 管理脚本版本号 SSOT（唯一字面量来源）:
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它，改版本号只需改这一处。
-export PROJECT_VERSION="2.2.2"
+export PROJECT_VERSION="2.2.3"
 export SCRIPT_VERSION="${PROJECT_VERSION}"
 
 # --- 颜色定义 ---
@@ -429,6 +429,14 @@ export CONFIG_FILE="${CONFIG_FILE:-${SINGBOX_DIR}/config.json}"
 export METADATA_FILE="${METADATA_FILE:-${SINGBOX_DIR}/metadata.json}"
 export ARGO_METADATA_FILE="${ARGO_METADATA_FILE:-${SINGBOX_DIR}/argo_metadata.json}"
 export CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}"
+
+# --- 服务器域名 (Trojan 真证书 / sni 兜底) ---
+# 优先级: 已设环境变量 SERVER_DOMAIN > 持久化文件 (.server_domain, 由 sb cert issue 写入)
+# 未签 acme 证书时为空, 各协议回退自签 + insecure=1
+if [ -z "${SERVER_DOMAIN:-}" ] && [ -f "${SINGBOX_DIR}/.server_domain" ]; then
+    SERVER_DOMAIN="$(cat "${SINGBOX_DIR}/.server_domain" 2>/dev/null | tr -d '[:space:]')"
+fi
+export SERVER_DOMAIN="${SERVER_DOMAIN:-}"
 
 # --- 独立运行时的环境检测 ---
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

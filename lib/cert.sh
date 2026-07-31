@@ -131,6 +131,13 @@ _cert_acme_issue() {
         chmod 600 "${CERT_ACME_DIR}/${domain}/privkey.pem"
         _success "证书已签发并落地: ${CERT_ACME_DIR}/${domain}/"
         _cert_save_meta "$domain"
+        # 持久化默认域名: 让 _cert_trojan_paths / _proto_trojan_config 的 sni 兜底能自动取到,
+        # 否则 SERVER_DOMAIN 为空 -> Trojan 永远回退自签 (证书白签)。
+        # 仅当尚未设置时才覆盖, 尊重用户手动指定的 SERVER_DOMAIN 环境变量。
+        if [ -z "${SERVER_DOMAIN:-}" ]; then
+            echo "$domain" > "${SINGBOX_DIR}/.server_domain"
+            _info "已将 ${domain} 设为默认 Trojan 域名 (写入 ${SINGBOX_DIR}/.server_domain)"
+        fi
         return 0
     fi
 
@@ -170,10 +177,17 @@ _cert_acme_paths() {
 }
 
 # Trojan 专用: 返回 (cert, key, sni, insecure) 四元组
-#   - 若 SERVER_DOMAIN 已设且存在该域名 acme 证书 → 用真证书, insecure=0, sni=域名
-#   - 否则 → 自签证书, insecure=1, sni=自签 CN (调用方通常传 server_ip 当 sni)
+#   域名解析优先级: SERVER_DOMAIN 变量 > .server_domain 持久化文件 > cert_metadata.json 首个已签发域名
+#   - 命中且有 acme 证书 → 用真证书, insecure=0, sni=域名
+#   - 否则 → 自签证书, insecure=1, sni=自签占位
 _cert_trojan_paths() {
     local domain="${SERVER_DOMAIN:-}"
+    if [ -z "$domain" ] && [ -f "${SINGBOX_DIR}/.server_domain" ]; then
+        domain="$(cat "${SINGBOX_DIR}/.server_domain" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    if [ -z "$domain" ] && [ -f "$CERT_META_FILE" ]; then
+        domain="$(jq -r 'keys[0] // empty' "$CERT_META_FILE" 2>/dev/null)"
+    fi
     if [ -n "$domain" ]; then
         local paths
         paths=$(_cert_acme_paths "$domain") && {

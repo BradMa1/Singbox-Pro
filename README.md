@@ -92,6 +92,19 @@ bash --version
 | `sb cert list` / `status` | 列出 / 查看已签发证书 |
 | `sb help` | 显示帮助信息 |
 
+#### 证书 → Trojan 真证书自动接通机制
+
+`sb cert issue <域名>` 成功后，会把该域名持久化到 `${SINGBOX_DIR}/.server_domain`。
+此后在「添加节点」菜单选 **[5] Trojan** 时，脚本自动读取该域名对应的 acme 真证书
+（`${SINGBOX_DIR}/acme/<域名>/`），生成的 Trojan 链接为 `allowInsecure=0`（真证书，无需客户端跳过验证）。
+
+> **前置条件（签发前必须完成）**：
+> 1. 域名已把 **A 记录解析到本机公网 IP**（如 `69.42.222.160`）；
+> 2. 放行 **80 端口**（Let's Encrypt 的 standalone 验证会访问 `http://域名/.well-known/acme-challenge/`）。
+>    - 80 端口被占用 / 不便开放时，改用 **DNS 验证模式**：先 `export CF_Token=xxx CF_Account_ID=yyy`（Cloudflare 示例），再 `sb cert issue <域名>`，无需开放 80。
+>
+> **域名解析尚未生效 / 80 不通** 会导致签发失败并提示，此时 Trojan 仍走自签证书（`allowInsecure=1`，功能正常但 stealth 降级）。
+
 ### sb health 输出示例
 
 ```
