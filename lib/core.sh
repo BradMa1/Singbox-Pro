@@ -5,7 +5,7 @@
 # ============================================================
 # 管理脚本版本号 SSOT（唯一字面量来源）:
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它，改版本号只需改这一处。
-export PROJECT_VERSION="2.1.7"
+export PROJECT_VERSION="2.1.9"
 export SCRIPT_VERSION="${PROJECT_VERSION}"
 
 # --- 颜色定义 ---

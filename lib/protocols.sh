@@ -529,11 +529,68 @@ _cert_sha256() {
 }
 
 # ============================================================
+# 协议 / 传输 / flow 兼容性校验 (P0 #1, v2.1.9)
+# ============================================================
+# 背景:
+#   - 2026-07-31 确诊 69.42.222.160 前端 L7 拦截裸 WebSocket;
+#   - 更早的存量 bug (vless-ws-50006 带 xtls-rprx-vision) 证明「ws + flow」这类
+#     矛盾配置能进入生产。sing-box 对部分组合只是忽略/告警仍能启动, 但客户端必连不通。
+# sing-box 语义规则:
+#   - flow (xtls-rprx-vision) 仅对 type=vless 有效;
+#   - 且要求 tls.reality.enabled == true (flow 是 reality 专属特性);
+#   - 且 transport 必须为 tcp (无 transport, 或 transport.type=="tcp");
+#     ws/grpc 上跑 vision 不被支持。
+# 任何 inbound 违反上述 → 视为无效配置, 阻止写入/重启。
+# 参数: $1 配置文件路径 (默认 $CONFIG_FILE)
+# 返回: 0 = 全部合规; 1 = 存在违规 (并打印违规项到 stderr)
+_proto_validate_flow_compat() {
+    local cfg="${1:-$CONFIG_FILE}"
+    [ -f "$cfg" ] || { _error "校验失败: 找不到配置文件 $cfg"; return 1; }
+    command -v jq >/dev/null 2>&1 || { _warn "jq 不可用, 跳过 flow 兼容性校验"; return 0; }
+
+    # 用 jq 抽出所有违规 inbound 的 "tag :: 原因"
+    local bad_list
+    bad_list=$(jq -r '
+        (.inbounds // []) | .[] |
+        (.tag) as $tag |
+        (.type) as $type |
+        (.tls.reality.enabled // false) as $reality |
+        (.transport.type // "tcp") as $transport |
+        ((.users // []) | map(.flow // "") | map(select(length>0)) | length) as $flow_count |
+        (if $flow_count > 0 then
+            (if $type != "vless" then
+                "flow 仅支持 vless, 但本 inbound type=\($type)"
+            elif $reality != true then
+                "flow(xtls-rprx-vision) 要求 tls.reality.enabled=true, 但 reality 未启用"
+            elif $transport != "tcp" then
+                "flow(xtls-rprx-vision) 仅支持 TCP 传输, 但 transport=\($transport) (ws/grpc 不支持 vision)"
+            else
+                empty
+            end)
+         else empty end) as $reason |
+        (if $reason != "" then "\($tag) :: \($reason)" else empty end)
+    ' "$cfg" 2>/dev/null)
+
+    if [ -n "$bad_list" ]; then
+        _error "协议/传输/flow 兼容性校验失败 — 以下 inbound 配置矛盾:"
+        echo "$bad_list" | while IFS= read -r line; do
+            echo -e "    ${RED}✗${NC} $line" >&2
+        done
+        _error "请修正后再写入/重启 (ws/tuic/hysteria2/anytls/vmess 等绝不能带 flow; vless 带 flow 必须 reality+tcp)。"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================
 # 添加入站到配置
 # ============================================================
 
 _proto_add_inbound() {
     local inbound_json="$1"
+
+    # P0 #1: 写入前先校验「协议/传输/flow 兼容性」, 杜绝 ws+flow 等矛盾配置进入生产
+    _proto_validate_flow_compat "$CONFIG_FILE" || return 1
 
     if ! _atomic_modify_json "$CONFIG_FILE" ".inbounds += [${inbound_json}]"; then
         _error "添加入站配置失败"

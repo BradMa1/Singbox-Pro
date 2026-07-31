@@ -147,6 +147,29 @@ main() {
             _sb_health_check
             ;;
 
+        validate)
+            # v2.1.9 新增: 校验「协议/传输/flow 兼容性」(sing-box check 不拦截的
+            # 逻辑矛盾, 如 ws+flow, 会启动但客户端连不通)。可选叠加 sing-box check。
+            _check_deps
+            _load_modules
+            local rc=0
+            if [ -x "$SINGBOX_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+                if "$SINGBOX_BIN" check -c "$CONFIG_FILE" &>/dev/null; then
+                    _info "sing-box check: 配置语法 OK"
+                else
+                    _error "sing-box check: 配置语法错误 (请用 'sing-box check -c $CONFIG_FILE' 查看)"
+                    rc=1
+                fi
+            fi
+            if _proto_validate_flow_compat "$CONFIG_FILE"; then
+                _success "协议/传输/flow 兼容性校验通过"
+            else
+                _error "协议/传输/flow 兼容性校验失败"
+                rc=1
+            fi
+            return $rc
+            ;;
+
         renew-cert)
             # v2.1.3 新增：重生成证书并加入公网 IP 到 SAN (修复 TUIC/VMess 握手失败)
             _check_deps
@@ -168,13 +191,14 @@ main() {
             echo ""
             echo "用法: sb [命令]"
             echo ""
-            echo "命令:"
-            echo "  (无参数)    启动管理面板"
-            echo "  status      查看运行状态"
-            echo "  health      深度健康检查"
-            echo "  restart     重启 sing-box 服务"
-            echo "  stop        停止 sing-box 服务"
-            echo "  log         查看实时日志"
+    echo "命令:"
+    echo "  (无参数)    启动管理面板"
+    echo "  status      查看运行状态"
+    echo "  health      深度健康检查"
+    echo "  validate    校验协议/传输/flow 兼容性 (捕获 ws+flow 等矛盾配置)"
+    echo "  restart     重启 sing-box 服务"
+    echo "  stop        停止 sing-box 服务"
+    echo "  log         查看实时日志"
     echo "  upgrade     升级管理脚本到最新版"
     echo "  upgrade-config  升级老证书/SAN + 老 DNS (8.8.8.8→1.1.1.1)"
     echo "  renew-cert  重生成证书并将公网 IP 加入 SAN (修复 TUIC/VMess 握手失败)"

@@ -77,7 +77,8 @@ bash --version
 |:-----|:------|
 | `sb` (无参数) | 启动交互式管理面板 |
 | `sb status` | 快速查看运行状态 |
-| `sb health` | 深度健康检查（依赖/进程/端口/DNS/系统资源/扩展服务） |
+| `sb health` | 深度健康检查（依赖/进程/端口/DNS/系统资源/扩展服务/协议兼容性） |
+| `sb validate` | 校验协议/传输/flow 兼容性（捕获 ws+flow 等矛盾配置，重启前自动拦截） |
 | `sb restart` | 重启 sing-box 服务 |
 | `sb stop` | 停止 sing-box 服务 |
 | `sb log` | 查看实时日志 |
@@ -344,6 +345,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 - WARP 域名分流通过 DNS 规则确保 AI 域名走 WARP 通道解析
 - `sb upgrade` 自动备份当前版本到 `.backup.时间戳/`，升级失败自动回滚
 - 安装脚本自动配置 logrotate 日志轮转（Logrotate 未安装时跳过）
+- **协议/传输/flow 兼容性自动校验（v2.1.9）**：`ws / tuic / hysteria2 / anytls / vmess` 等协议**绝不能带 `flow`**；`vless` 带 `flow`（xtls-rprx-vision）必须 `tls.reality.enabled=true` 且传输为 TCP（ws/grpc 不支持 vision）。脚本在「添加节点」「重启前」「`sb validate`」「`sb health`」四处自动校验，命中矛盾配置即阻止写入/重启（sing-box 自身能启动这类矛盾配置但客户端必连不通）。手动排查：`sb validate`，或 `jq '.inbounds[] | select(.users[].flow != null)' /usr/local/etc/sing-box/config.json`
 
 ---
 

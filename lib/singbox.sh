@@ -325,6 +325,13 @@ _sb_restart_and_verify() {
         fi
     fi
 
+    # P0 #1: 额外校验「协议/传输/flow 兼容性」(sing-box check 不拦截这类逻辑矛盾,
+    # 如 ws+flow, 它会启动但客户端必连不通)。校验不过则取消重启, 避免把矛盾配置上线。
+    if ! _proto_validate_flow_compat "$CONFIG_FILE"; then
+        _error "兼容性校验未通过，已取消重启以防矛盾配置导致节点不可用"
+        return 1
+    fi
+
     _manage_service "restart"
     sleep 2
 
@@ -874,6 +881,15 @@ _sb_health_check() {
                 fi
             done 2>/dev/null || true
         fi
+    fi
+    echo ""
+
+    # 3.5 协议/传输/flow 兼容性 (P0 #1, v2.1.9)
+    echo -e "${BLUE}── 协议兼容性 ──${NC}"
+    if _proto_validate_flow_compat "$CONFIG_FILE" 2>/dev/null; then
+        _include_status "协议/传输/flow 兼容性 (无 ws+flow 等矛盾配置)" "ok"
+    else
+        _include_status "协议/传输/flow 兼容性 (存在矛盾配置, 见上方明细)" "fail"
     fi
     echo ""
 
