@@ -147,8 +147,11 @@ _ui_add_node_menu() {
     echo -e "    ${GREEN}[2]${NC} AnyTLS            (轻量 TLS)"
     echo -e "    ${GREEN}[3]${NC} TUIC V5           (UDP + BBR 加速)"
     echo -e "    ${GREEN}[4]${NC} Hysteria2        (QUIC, 低延迟)"
+    echo -e "    ${GREEN}[5]${NC} Trojan            (TLS, 真证书 HTTPS 外形, 路径放行)"
+    echo -e "    ${GREEN}[6]${NC} Shadowsocks 2022 (AEAD, 轻量兜底/老设备)"
+    echo -e "    ${GREEN}[7]${NC} SOCKS5           (明文, 带认证, 作跳板/本地代理)"
     echo ""
-    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3)，直接回车 = 默认 4 协议 (Reality/AnyTLS/TUIC/Hy2)${NC}"
+    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3 5)，直接回车 = 默认 4 协议 (Reality/AnyTLS/TUIC/Hy2)${NC}"
     echo -e "    ${YELLOW}[0]${NC} 返回"
     echo ""
 
@@ -159,17 +162,17 @@ _ui_add_node_menu() {
     local selected=()
     for ch in $proto_choice; do
         case $ch in
-            1|2|3|4) selected+=("$ch") ;;
+            1|2|3|4|5|6|7) selected+=("$ch") ;;
             0) return ;;
             *) _warn "无效选项: $ch，跳过"; sleep 1 ;;
         esac
     done
     [ ${#selected[@]} -eq 0 ] && return
 
-    # ===== 证书预生成 (AnyTLS/TUIC/Hy2 需要) =====
+    # ===== 证书预生成 (AnyTLS/TUIC/Hy2/Trojan 需要) =====
     local need_cert=false
     for ch in "${selected[@]}"; do
-        case $ch in 2|3|4) need_cert=true; break ;; esac
+        case $ch in 2|3|4|5) need_cert=true; break ;; esac
     done
     if $need_cert; then
         _proto_generate_cert || { read -p "按回车键返回..."; return; }
@@ -185,6 +188,9 @@ _ui_add_node_menu() {
     proto_names[2]="AnyTLS"
     proto_names[3]="TUIC V5"
     proto_names[4]="Hysteria2"
+    proto_names[5]="Trojan"
+    proto_names[6]="Shadowsocks 2022"
+    proto_names[7]="SOCKS5"
 
     declare -A ports
     for ch in "${selected[@]}"; do
@@ -241,6 +247,9 @@ _ui_add_node_menu() {
             2) result=$(_ui_add_anytls_quick   "$port" "$name_prefix") ;;
             3) result=$(_ui_add_tuic_quick     "$port" "$name_prefix") ;;
             4) result=$(_ui_add_hy2_quick      "$port" "$name_prefix") ;;
+            5) result=$(_ui_add_trojan_quick   "$port" "$name_prefix") ;;
+            6) result=$(_ui_add_ss2022_quick   "$port" "$name_prefix") ;;
+            7) result=$(_ui_add_socks5_quick   "$port" "$name_prefix") ;;
         esac
 
         [ -n "$result" ] && result_lines+=("$result")
@@ -310,6 +319,36 @@ _ui_add_node_menu() {
                 echo -e "    端口: ${port}  路径: ${ws_path}"
                 echo -e "    ${GREEN}${uri}${NC}"
                 echo -e "    ${YELLOW}↑ VLESS over WebSocket + TLS (sing-box 1.11+ 原生, 替代已移除的 VMess)${NC}"
+                echo ""
+                ;;
+            trojan)
+                # 槽位复用: $4=password $5=sni $6=insecure
+                local password="$uuid" sni="$sni" insecure="$sid"
+                local uri=$(_proto_trojan_uri "$password" "$server_ip" "$port" "$name" "$sni" "$insecure")
+                echo -e "  ${GREEN}● ${name}${NC} (Trojan)"
+                echo -e "    端口: ${port}  SNI: ${sni}  insecure=${insecure}"
+                echo -e "    ${GREEN}${uri}${NC}"
+                echo -e "    ${YELLOW}↑ Trojan over TLS, 真证书 HTTPS 外形 (路径放行); 自签场景需客户端 insecure=1${NC}"
+                echo ""
+                ;;
+            ss2022)
+                # 槽位复用: $4=psk $5=method
+                local psk="$uuid" method="$sni"
+                local uri=$(_proto_ss2022_uri "$method" "$psk" "$server_ip" "$port" "$name")
+                echo -e "  ${GREEN}● ${name}${NC} (Shadowsocks 2022)"
+                echo -e "    端口: ${port}  方法: ${method}"
+                echo -e "    ${GREEN}${uri}${NC}"
+                echo -e "    ${YELLOW}↑ AEAD 轻量协议, 作兜底/老设备节点${NC}"
+                echo ""
+                ;;
+            socks5)
+                # 槽位复用: $4=user $5=pass
+                local user="$uuid" pass="$sni"
+                local uri=$(_proto_socks5_uri "$user" "$pass" "$server_ip" "$port" "$name")
+                echo -e "  ${GREEN}● ${name}${NC} (SOCKS5)"
+                echo -e "    端口: ${port}  用户: ${user}"
+                echo -e "    ${GREEN}${uri}${NC}"
+                echo -e "    ${YELLOW}↑ 明文 SOCKS5(带认证), 仅建议本地/可信网络/中转跳板使用${NC}"
                 echo ""
                 ;;
         esac
@@ -451,6 +490,115 @@ _ui_add_hy2_quick() {
     _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
 
     echo "hy2|${name}|${port}||||${password}||"
+}
+
+_ui_add_trojan_quick() {
+    local port=$1
+    local name_prefix=$2
+
+    if _check_port_occupied "$port" "tcp"; then
+        _error "端口 ${port} 已被占用，跳过 Trojan"
+        return 1
+    fi
+
+    local password=$(_random_hex 16)
+
+    local name
+    [ -n "$name_prefix" ] && name="${name_prefix}-trojan" || name="Trojan-${port}"
+
+    # 证书: 优先 acme 真证书 (cert.sh), 回退自签 (SAN 已含公网 IP)
+    local certinfo cert key sni insecure
+    certinfo=$(_cert_trojan_paths)
+    cert=$(echo "$certinfo" | awk '{print $1}')
+    key=$(echo "$certinfo" | awk '{print $2}')
+    sni=$(echo "$certinfo" | awk '{print $3}')
+    insecure=$(echo "$certinfo" | awk '{print $4}')
+
+    local inbound_json=$(_proto_trojan_config "$port" "$password" "$cert" "$key" "$sni")
+    _proto_add_inbound "$inbound_json" || return 1
+
+    local meta_json=$(jq -n \
+        --arg tag "trojan-${port}" \
+        --arg name "$name" \
+        --arg password "$password" \
+        --arg sni "$sni" \
+        --arg insecure "$insecure" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "trojan", password: $password, sni: $sni, insecure: ($insecure|tostring), port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
+
+    # 槽位: proto|name|port|password|sni|insecure|||  (显示分支按此解析)
+    echo "trojan|${name}|${port}|${password}|${sni}|${insecure}|||"
+}
+
+_ui_add_ss2022_quick() {
+    local port=$1
+    local name_prefix=$2
+
+    if _check_port_occupied "$port" "tcp"; then
+        _error "端口 ${port} 已被占用，跳过 Shadowsocks 2022"
+        return 1
+    fi
+
+    # SS2022 PSK: 32 字节 base64 (对应 2022-blake3-aes-256-gcm)
+    local psk=$(openssl rand -base64 32 2>/dev/null | tr -d '\n=')
+    [ -z "$psk" ] && psk=$(_random_hex 32)
+    local method="2022-blake3-aes-256-gcm"
+
+    local name
+    [ -n "$name_prefix" ] && name="${name_prefix}-ss2022" || name="SS2022-${port}"
+
+    local inbound_json=$(_proto_ss2022_config "$port" "$psk" "$method")
+    _proto_add_inbound "$inbound_json" || return 1
+
+    local meta_json=$(jq -n \
+        --arg tag "ss2022-${port}" \
+        --arg name "$name" \
+        --arg psk "$psk" \
+        --arg method "$method" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "shadowsocks", psk: $psk, method: $method, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
+
+    # 槽位: proto|name|port|psk|method||||  (显示分支按此解析)
+    echo "ss2022|${name}|${port}|${psk}|${method}||||"
+}
+
+_ui_add_socks5_quick() {
+    local port=$1
+    local name_prefix=$2
+
+    if _check_port_occupied "$port" "tcp"; then
+        _error "端口 ${port} 已被占用，跳过 SOCKS5"
+        return 1
+    fi
+
+    local user="u$(_random_hex 4)"
+    local pass=$(_random_hex 12)
+
+    local name
+    [ -n "$name_prefix" ] && name="${name_prefix}-socks5" || name="SOCKS5-${port}"
+
+    local inbound_json=$(_proto_socks5_config "$port" "$user" "$pass")
+    _proto_add_inbound "$inbound_json" || return 1
+
+    local meta_json=$(jq -n \
+        --arg tag "socks5-${port}" \
+        --arg name "$name" \
+        --arg user "$user" \
+        --arg pass "$pass" \
+        --arg port "$port" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{($tag): {name: $name, type: "socks", user: $user, password: $pass, port: ($port|tonumber), created_at: $created}}')
+    [ ! -f "$METADATA_FILE" ] && echo '{}' > "$METADATA_FILE"
+    _atomic_modify_json "$METADATA_FILE" ".protocols += $meta_json"
+
+    # 槽位: proto|name|port|user|pass||||  (显示分支按此解析)
+    echo "socks5|${name}|${port}|${user}|${pass}||||"
 }
 
 # ============================================================
@@ -1262,6 +1410,323 @@ _ui_view_nodes() {
 # 节点分享：订阅链接 + 二维码
 # ============================================================
 
+# ============================================================
+# 订阅导出 — Clash Meta YAML / Sing-box 原生 JSON
+# 借鉴 yonggekkk/sing-box-yg 的思路: 在一键脚本里本地生成完整客户端配置,
+# base64 成 data-URI 订阅, 无需第三方订阅器/外链 (契合我们「本地化生成」理念)。
+# 与对方一致: Clash Meta 含 proxy-groups(手动选择 + url-test 自动选择) + 基础规则;
+#              Sing-box JSON 为官方客户端(SFA/SFI/SFW)可直接订阅的完整配置。
+# ============================================================
+
+_build_clash_yaml() {
+    local server_ip="${1:-$(_get_public_ip)}"
+    local -a names=()
+    local proxies=""
+
+    while IFS= read -r line; do
+        local tag=$(echo "$line" | jq -r .tag)
+        local type=$(echo "$line" | jq -r .type)
+        local port=$(echo "$line" | jq -r .listen_port)
+        local name="${type}-${port}"
+        [ -f "$METADATA_FILE" ] && name=$(jq -r ".protocols.\"$tag\".name // empty" "$METADATA_FILE" 2>/dev/null || echo "$name")
+        [ -z "$name" ] && name="${type}-${port}"
+        names+=("$name")
+
+        local block=""
+        case "$type" in
+            vless)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local is_reality=$(echo "$line" | jq -r '(.tls.reality != null) and (.tls.reality != {})' 2>/dev/null)
+                if [ "$is_reality" = "true" ]; then
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
+                    local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
+                    local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                    block=$(cat <<EOF
+  - name: "$name"
+    type: vless
+    server: $server_ip
+    port: $port
+    uuid: $uuid
+    network: tcp
+    tls: true
+    udp: true
+    flow: $flow
+    client-fingerprint: chrome
+    servername: ${sni:-$DEFAULT_SNI}
+    reality-opts:
+      public-key: $pbk
+      short-id: $sid
+EOF
+)
+                else
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                    block=$(cat <<EOF
+  - name: "$name"
+    type: vless
+    server: $server_ip
+    port: $port
+    uuid: $uuid
+    network: ws
+    tls: true
+    udp: true
+    client-fingerprint: chrome
+    servername: ${sni:-$server_ip}
+    ws-opts:
+      path: $ws_path
+    skip-cert-verify: true
+EOF
+)
+                fi
+                ;;
+            anytls)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: anytls
+    server: $server_ip
+    port: $port
+    password: $pw
+    client-fingerprint: chrome
+    tls: true
+    udp: true
+    skip-cert-verify: true
+EOF
+)
+                ;;
+            tuic)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: tuic
+    server: $server_ip
+    port: $port
+    uuid: $uuid
+    password: $pw
+    ip: $server_ip
+    sni: $server_ip
+    alpn:
+      - h3
+    disable-sni: false
+    reduce-rtt: true
+    udp: true
+    skip-cert-verify: true
+EOF
+)
+                ;;
+            hysteria2)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: hysteria2
+    server: $server_ip
+    port: $port
+    password: $pw
+    sni: $server_ip
+    alpn:
+      - h3
+    udp: true
+    skip-cert-verify: true
+EOF
+)
+                ;;
+            trojan)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                local insecure=$(jq -r ".protocols.\"$tag\".insecure // \"1\"" "$METADATA_FILE" 2>/dev/null || echo "1")
+                block=$(cat <<EOF
+  - name: "$name"
+    type: trojan
+    server: $server_ip
+    port: $port
+    password: $pw
+    sni: ${sni:-$server_ip}
+    alpn:
+      - h2
+      - http/1.1
+    client-fingerprint: chrome
+    udp: true
+    skip-cert-verify: $insecure
+EOF
+)
+                ;;
+            shadowsocks)
+                local psk=$(echo "$line" | jq -r '.password // empty')
+                local method=$(echo "$line" | jq -r '.method // "2022-blake3-aes-256-gcm"')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: ss
+    server: $server_ip
+    port: $port
+    cipher: $method
+    password: $psk
+    udp: true
+EOF
+)
+                ;;
+            socks)
+                local u=$(echo "$line" | jq -r '.users[0].username // empty')
+                local p=$(echo "$line" | jq -r '.users[0].password // empty')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: socks5
+    server: $server_ip
+    port: $port
+    username: $u
+    password: $p
+    udp: true
+EOF
+)
+                ;;
+            vmess)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                block=$(cat <<EOF
+  - name: "$name"
+    type: vmess
+    server: $server_ip
+    port: $port
+    uuid: $uuid
+    alterId: 0
+    cipher: auto
+    network: ws
+    tls: true
+    udp: true
+    ws-opts:
+      path: $ws_path
+      headers: {}
+    skip-cert-verify: true
+EOF
+)
+                ;;
+        esac
+        [ -n "$block" ] && proxies="${proxies}${block}"$'\n'
+    done < <(_proto_list_inbounds 2>/dev/null)
+
+    [ -z "$proxies" ] && return 0
+
+    local group_items=""
+    for n in "${names[@]}"; do
+        group_items="${group_items}      - \"${n}\""$'\n'
+    done
+
+    cat <<EOF
+proxies:
+${proxies}proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "♻️ 自动选择"
+${group_items}  - name: "♻️ 自动选择"
+    type: url-test
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${group_items}rules:
+  - GEOIP,CN,DIRECT
+  - GEOSITE,CN,DIRECT
+  - MATCH,"🚀 节点选择"
+EOF
+}
+
+_build_singbox_json() {
+    local server_ip="${1:-$(_get_public_ip)}"
+    local outbounds="[]"
+    local -a tags=()
+
+    while IFS= read -r line; do
+        local tag=$(echo "$line" | jq -r .tag)
+        local type=$(echo "$line" | jq -r .type)
+        local port=$(echo "$line" | jq -r .listen_port)
+        local name="${type}-${port}"
+        [ -f "$METADATA_FILE" ] && name=$(jq -r ".protocols.\"$tag\".name // empty" "$METADATA_FILE" 2>/dev/null || echo "$name")
+        [ -z "$name" ] && name="${type}-${port}"
+        tags+=("$name")
+
+        local obj=""
+        case "$type" in
+            vless)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local is_reality=$(echo "$line" | jq -r '(.tls.reality != null) and (.tls.reality != {})' 2>/dev/null)
+                if [ "$is_reality" = "true" ]; then
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local sid=$(echo "$line" | jq -r '.tls.reality.short_id[0] // empty')
+                    local flow=$(echo "$line" | jq -r '.users[0].flow // "xtls-rprx-vision"')
+                    local pbk=$(jq -r ".protocols.\"$tag\".public_key // empty" "$METADATA_FILE" 2>/dev/null)
+                    obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg flow "$flow" --arg sni "${sni:-$DEFAULT_SNI}" --arg pbk "$pbk" --arg sid "$sid" '{type:"vless",tag:$name,server:$ip,server_port:$port,uuid:$uuid,flow:$flow,tls:{enabled:true,server_name:$sni,reality:{enabled:true,public_key:$pbk,short_id:$sid}},transport:{type:"tcp"}}')
+                else
+                    local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                    local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                    obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg sni "${sni:-$server_ip}" --arg path "$ws_path" '{type:"vless",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:true},transport:{type:"ws",path:$path}}')
+                fi
+                ;;
+            anytls)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" '{type:"anytls",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:true}}')
+                ;;
+            tuic)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg pw "$pw" '{type:"tuic",tag:$name,server:$ip,server_port:$port,uuid:$uuid,password:$pw,tls:{enabled:true,alpn:["h3"],insecure:true},congestion_control:"bbr"}')
+                ;;
+            hysteria2)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" '{type:"hysteria2",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:true}}')
+                ;;
+            trojan)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                local insecure=$(jq -r ".protocols.\"$tag\".insecure // 1" "$METADATA_FILE" 2>/dev/null || echo 1)
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" --arg sni "${sni:-$server_ip}" --argjson insecure "$insecure" '{type:"trojan",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,server_name:$sni,insecure:$insecure}}')
+                ;;
+            shadowsocks)
+                local psk=$(echo "$line" | jq -r '.password // empty')
+                local method=$(echo "$line" | jq -r '.method // "2022-blake3-aes-256-gcm"')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg method "$method" --arg psk "$psk" '{type:"shadowsocks",tag:$name,server:$ip,server_port:$port,method:$method,password:$psk}')
+                ;;
+            socks)
+                local u=$(echo "$line" | jq -r '.users[0].username // empty')
+                local p=$(echo "$line" | jq -r '.users[0].password // empty')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg u "$u" --arg p "$p" '{type:"socks",tag:$name,server:$ip,server_port:$port,users:[{username:$u,password:$p}]}')
+                ;;
+            vmess)
+                local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
+                local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
+                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg path "$ws_path" '{type:"vmess",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:true},transport:{type:"ws",path:$path}}')
+                ;;
+        esac
+        [ -n "$obj" ] && outbounds=$(echo "$outbounds" | jq --argjson o "$obj" '. + [$o]')
+    done < <(_proto_list_inbounds 2>/dev/null)
+
+    [ "$outbounds" = "[]" ] && { echo '{}'; return 0; }
+
+    local taglist=$(printf '%s\n' "${tags[@]}" | jq -R . | jq -s .)
+    local full=$(echo "$outbounds" | jq --argjson tags "$taglist" '
+        . + [{type:"selector",tag:"proxy",outbounds:$tags},
+              {type:"direct",tag:"direct"},
+              {type:"dns",tag:"dns-out"}]')
+    jq -n --argjson outs "$full" '
+    {
+      inbounds: [{type:"mixed",tag:"mixed-in",listen:"127.0.0.1",listen_port:7890}],
+      outbounds: $outs,
+      route: {
+        rules: [
+          {geoip:["cn"],outbound:"direct"},
+          {geosite:["cn"],outbound:"direct"}
+        ],
+        final:"proxy",
+        auto_detect_interface:true
+      },
+      dns: {
+        servers:[{address:"1.1.1.1"},{address:"223.5.5.5",geoip:["cn"]}],
+        final:"dns-out"
+      }
+    }'
+}
+
 _ui_subscription() {
     _require_singbox || return 1
     _ensure_node_metadata_names
@@ -1332,6 +1797,22 @@ _ui_subscription() {
                 local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
                 uri=$(_proto_vmess_ws_standard_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name")
                 ;;
+            trojan)
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                local insecure=$(jq -r ".protocols.\"$tag\".insecure // \"1\"" "$METADATA_FILE" 2>/dev/null || echo "1")
+                uri=$(_proto_trojan_uri "$pw" "$server_ip" "$port" "$name" "${sni:-$server_ip}" "$insecure")
+                ;;
+            shadowsocks)
+                local psk=$(echo "$line" | jq -r '.password // empty')
+                local method=$(echo "$line" | jq -r '.method // "2022-blake3-aes-256-gcm"')
+                uri=$(_proto_ss2022_uri "$method" "$psk" "$server_ip" "$port" "$name")
+                ;;
+            socks)
+                local u=$(echo "$line" | jq -r '.users[0].username // empty')
+                local p=$(echo "$line" | jq -r '.users[0].password // empty')
+                uri=$(_proto_socks5_uri "$u" "$p" "$server_ip" "$port" "$name")
+                ;;
         esac
         [ -n "$uri" ] && node_uris+=("$uri")
     done < <(_proto_list_inbounds 2>/dev/null)
@@ -1356,6 +1837,28 @@ _ui_subscription() {
     echo -e "${GREEN}${sub_b64}${NC}"
     echo ""
     echo -e "${YELLOW}提示: 订阅链接一次性包含所有节点，客户端更新订阅即可同步增删。${NC}"
+    echo ""
+
+    # --- Clash Meta YAML 订阅 (data-URI, 本地零托管) ---
+    local clash_yaml=$(_build_clash_yaml "$server_ip")
+    if [ -n "$clash_yaml" ]; then
+        local clash_b64=$(printf '%s' "$clash_yaml" | base64 -w0 2>/dev/null | tr -d '\n')
+        echo -e "${CYAN}【Clash Meta 订阅】(Clash Verge / Mihomo / OpenClash / 小火箭)${NC}"
+        echo -e "${GREEN}data:text/yaml;base64,${clash_b64}${NC}"
+        echo ""
+    fi
+
+    # --- Sing-box 原生 JSON 订阅 (data-URI) ---
+    local sb_json=$(_build_singbox_json "$server_ip")
+    if [ -n "$sb_json" ] && [ "$sb_json" != "{}" ]; then
+        local sb_b64=$(printf '%s' "$sb_json" | base64 -w0 2>/dev/null | tr -d '\n')
+        echo -e "${CYAN}【Sing-box 订阅】(SFA / SFI / SFW 官方客户端)${NC}"
+        echo -e "${GREEN}data:application/json;base64,${sb_b64}${NC}"
+        echo ""
+    fi
+
+    echo -e "${YELLOW}注: data-URI 可直接粘贴到支持「订阅链接」的客户端; 若客户端仅接受 http(s) 订阅,${NC}"
+    echo -e "${YELLOW}   可将上面的 YAML / JSON 内容保存为 .yaml / .json 文件后本地导入。${NC}"
     echo ""
 
     # 二维码：移动端扫码导入单节点

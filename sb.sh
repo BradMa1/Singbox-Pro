@@ -36,6 +36,7 @@ _load_modules() {
         "core.sh"
         "singbox.sh"
         "protocols.sh"
+        "cert.sh"
         "argo.sh"
         "warp.sh"
         "relay.sh"
@@ -177,6 +178,13 @@ main() {
             _sb_renew_cert
             ;;
 
+        cert)
+            # v2.2.0 新增: acme.sh 真实证书签发 (Trojan 真证书 HTTPS 外形用)
+            _check_deps
+            _load_modules
+            _cert_cli "$2" "$3" "$4"
+            ;;
+
         install)
             # 在 VPS 上首次安装时调用
             echo "请使用 install.sh 进行首次部署:"
@@ -202,6 +210,7 @@ main() {
     echo "  upgrade     升级管理脚本到最新版"
     echo "  upgrade-config  升级老证书/SAN + 老 DNS (8.8.8.8→1.1.1.1)"
     echo "  renew-cert  重生成证书并将公网 IP 加入 SAN (修复 TUIC/VMess 握手失败)"
+    echo "  cert        管理 acme 真实证书 (issue/renew/list/status, 供 Trojan 使用)"
     echo "  backup      备份配置"
             echo "  help        显示此帮助"
             ;;

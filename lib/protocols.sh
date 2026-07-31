@@ -1,7 +1,8 @@
 #!/bin/bash
 # ============================================================
-# protocols.sh — Singbox-Pro 5协议处理模块
+# protocols.sh — Singbox-Pro 协议处理模块
 # VLESS Reality / AnyTLS / TUIC V5 / Hysteria2 / VMess WebSocket
+# + Trojan / Shadowsocks 2022 / SOCKS5
 # ============================================================
 export PROTO_MOD_VERSION="${PROJECT_VERSION}"
 
@@ -243,7 +244,112 @@ _proto_hy2_uri() {
 }
 
 # ============================================================
-# 5. VMess WebSocket
+# 5. Trojan (TLS, 真证书 HTTPS 外形, 路径放行)
+# ============================================================
+# Trojan 流量长得跟正常 HTTPS 一模一样, 不像 ws 会被 L7 按特征拦截;
+# 与 VLESS-Reality 互补: reality 靠伪造 TLS 握手, trojan 靠真证书伪装真实网站。
+# 证书: 优先用 acme 真实证书 (cert.sh 签发), 回退自签 (SAN 已含公网 IP)。
+# 注意: Trojan 服务端 inbound 必须配 TLS; 自签场景客户端需 allowInsecure=1。
+
+_proto_trojan_config() {
+    local port="$1" password="$2"
+    local cert_path="${3:-${SINGBOX_DIR}/cert.pem}"
+    local key_path="${4:-${SINGBOX_DIR}/key.pem}"
+    local sni="${5:-${SERVER_DOMAIN:-www.example.com}}"
+
+    cat << EOF
+{
+    "type": "trojan",
+    "tag": "trojan-${port}",
+    "listen": "::",
+    "listen_port": ${port},
+    "users": [
+        { "password": "${password}" }
+    ],
+    "tls": {
+        "enabled": true,
+        "certificate_path": "${cert_path}",
+        "key_path": "${key_path}",
+        "server_name": "${sni}"
+    }
+}
+EOF
+}
+
+_proto_trojan_uri() {
+    local password="$1" server_ip="$2" port="$3" name="$4"
+    local sni="${5:-$server_ip}"
+    local insecure="${6:-1}"
+    local ep=$(_url_encode "$name")
+    # Trojan 强制 TLS; 自签证书场景 insecure=1 (sing-box 内核合法, 不受 Xray 8/1 禁令影响)
+    # 真证书(ACME)场景传 insecure=0 即可, 保留该字段不破坏解析
+    echo -n "trojan://${password}@${server_ip}:${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
+}
+
+# ============================================================
+# 6. Shadowsocks 2022 (AEAD, 轻量兜底/老设备)
+# ============================================================
+# 2022 系列为 AEAD 增强版, 密码学强度高于旧 ss (rc4/md5 等已淘汰)。
+# 这里用 2022-blake3-aes-256-gcm (PSK 32 字节 base64)。
+# 优势: 极轻量, 低端路由/嵌入式设备/老旧客户端都能跑; 作兜底节点。
+
+_proto_ss2022_config() {
+    local port="$1" psk="$2"
+    local method="${3:-2022-blake3-aes-256-gcm}"
+
+    cat << EOF
+{
+    "type": "shadowsocks",
+    "tag": "ss2022-${port}",
+    "listen": "::",
+    "listen_port": ${port},
+    "method": "${method}",
+    "password": "${psk}"
+}
+EOF
+}
+
+_proto_ss2022_uri() {
+    local method="$1" psk="$2" server_ip="$3" port="$4" name="$5"
+    local ep=$(_url_encode "$name")
+    # SIP002 标准: ss://base64(method:password)@host:port#name
+    # 内部 PSK 已是 base64 (含 +/ =), 外层 base64 后会再编码, 无需手动转 url-safe
+    local userinfo=$(printf '%s:%s' "$method" "$psk" | base64 2>/dev/null | tr -d '\n=')
+    echo -n "ss://${userinfo}@${server_ip}:${port}#${ep}"
+}
+
+# ============================================================
+# 7. SOCKS5 (明文, 带用户名/密码认证)
+# ============================================================
+# 说明: SOCKS5 本身无加密, 仅适合可信网络或作本地/中转跳板, 不建议直连公网当主力节点。
+# 这里按用户要求提供「带认证的 SOCKS5 服务端 inbound」, 用于:
+#   - 本地工具/爬虫走代理; - 作为 relay 中转机的入口跳板 (配合下游加密协议)。
+# ⚠️ 直连公网暴露 SOCKS5 有被扫描滥用的风险, 脚本仅生成配置, 是否暴露由用户自行决定。
+
+_proto_socks5_config() {
+    local port="$1" user="$2" pass="$3"
+
+    cat << EOF
+{
+    "type": "socks",
+    "tag": "socks5-${port}",
+    "listen": "::",
+    "listen_port": ${port},
+    "users": [
+        { "username": "${user}", "password": "${pass}" }
+    ]
+}
+EOF
+}
+
+_proto_socks5_uri() {
+    local user="$1" pass="$2" server_ip="$3" port="$4" name="$5"
+    local ep=$(_url_encode "$name")
+    echo -n "socks5://${user}:${pass}@${server_ip}:${port}#${ep}"
+}
+
+# ============================================================
+# 8. VMess WebSocket
 # ============================================================
 
 _proto_vmess_ws_config() {
@@ -674,6 +780,18 @@ _proto_get_uri() {
                 _proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
             fi
             ;;
+        trojan)
+            local password="$1" sni="${2:-$server_ip}" insecure="${3:-1}"
+            _proto_trojan_uri "$password" "$server_ip" "$port" "$name" "$sni" "$insecure"
+            ;;
+        shadowsocks)
+            local method="$1" psk="$2"
+            _proto_ss2022_uri "$method" "$psk" "$server_ip" "$port" "$name"
+            ;;
+        socks)
+            local user="$1" pass="$2"
+            _proto_socks5_uri "$user" "$pass" "$server_ip" "$port" "$name"
+            ;;
         *)
             _error "不支持的协议: $proto"
             return 1
@@ -705,11 +823,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "=== Singbox-Pro protocols 模块 v${PROTO_MOD_VERSION} ==="
     echo ""
     echo "支持的协议:"
-    echo "  1. VLESS Reality  (TLS + reality)"
+    echo "  1. VLESS Reality  (TLS + reality, 抗封锁)"
     echo "  2. AnyTLS"
     echo "  3. TUIC V5         (UDP + BBR)"
     echo "  4. Hysteria2       (QUIC)"
-    echo "  5. VLESS WebSocket (WS, 经 Argo 隧道使用, 不直接对外暴露)"
+    echo "  5. Trojan          (TLS, 真证书 HTTPS 外形, 路径放行)"
+    echo "  6. Shadowsocks2022 (AEAD, 轻量兜底)"
+    echo "  7. SOCKS5          (明文, 带认证, 作跳板/本地代理)"
+    echo "  8. VLESS WebSocket (WS, 经 Argo 隧道使用, 不直接对外暴露)"
     echo ""
     if _sb_is_installed 2>/dev/null; then
         echo "已配置的入站:"

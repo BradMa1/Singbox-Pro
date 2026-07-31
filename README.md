@@ -1,6 +1,6 @@
 # Sing-box Pro
 
-多协议节点部署管理脚本，支持 5 种协议自由组合 + 协议中转 + Argo 隧道 + 端口转发 + WARP 域名分流。
+多协议节点部署管理脚本，支持 8 种协议自由组合 + 协议中转 + Argo 隧道 + 端口转发 + WARP 域名分流。
 
 ## 支持协议
 
@@ -10,6 +10,9 @@
 | AnyTLS | 新一代伪装协议 |
 | TUIC V5 | QUIC 协议，低延迟 |
 | Hysteria2 | UDP 加速，弱网友好 |
+| Trojan | TLS 真证书 HTTPS 外形，路径放行（配 acme 真实证书 stealth 最佳） |
+| Shadowsocks 2022 | AEAD 轻量协议，兜底/老设备节点 |
+| SOCKS5 | 明文带认证，作本地代理 / 中转跳板（不建议直连公网暴露） |
 | VLESS-WS（经 Argo 隧道）| WebSocket + TLS，Cloudflare 前置，免直连暴露 |
 
 ## 一键安装
@@ -84,6 +87,9 @@ bash --version
 | `sb log` | 查看实时日志 |
 | `sb upgrade` | 升级管理脚本到最新版 |
 | `sb backup` | 备份当前配置 |
+| `sb cert issue <域名> [邮箱]` | 用 acme.sh 签发 Let's Encrypt 真实证书（standalone / DNS 自动识别），供 Trojan 真证书使用 |
+| `sb cert renew [域名]` | 续期证书（不指定域名则全部） |
+| `sb cert list` / `status` | 列出 / 查看已签发证书 |
 | `sb help` | 显示帮助信息 |
 
 ### sb health 输出示例
@@ -130,9 +136,12 @@ bash --version
 
 ```
 1) VLESS Reality   2) AnyTLS   3) TUIC V5   4) Hysteria2
+5) Trojan          6) Shadowsocks 2022   7) SOCKS5
 ```
 
-> 直连节点默认 4 种协议。WebSocket（VLESS-WS）不在此菜单，仅通过 **Argo 隧道（菜单 2）** 经 Cloudflare 前置暴露——直连 WS 在部分带 L7 前端的 VPS / 网络出口会被按特征拦截，故默认不提供直连 WS 入口。
+> 直连节点默认 4 种协议（Reality/AnyTLS/TUIC/Hy2）。**Trojan** 主打真证书 HTTPS 外形，建议先用 `sb cert issue <域名>` 签发 acme 真实证书以获得最佳 stealth；**Shadowsocks 2022** 轻量兜底；**SOCKS5** 仅作本地代理 / 中转跳板，不建议直连公网。
+>
+> WebSocket（VLESS-WS）不在此菜单，仅通过 **Argo 隧道（菜单 2）** 经 Cloudflare 前置暴露——直连 WS 在部分带 L7 前端的 VPS / 网络出口会被按特征拦截，故默认不提供直连 WS 入口。
 
 
 ## Argo 隧道节点（菜单 2）
@@ -148,9 +157,15 @@ bash --version
 
 > Argo 隧道由 systemd 托管（`argo-tunnel@<端口>` / `argo-fixed@<端口>`，`Restart=always`），VPS 重启后自动恢复，无需看门狗。
 
-## 查看节点链接（菜单 3）
+## 查看节点链接 / 订阅（菜单 3）
 
-自动生成所有已启用协议的分享链接并打印到屏幕（不会写入文件）。
+自动生成所有已启用协议的分享链接并打印到屏幕（不会写入文件）。同时提供三种订阅格式，复制即可导入客户端：
+
+- **通用订阅**：每行一个 URI 的 base64（v2rayN / 小火箭老式订阅）
+- **Clash Meta 订阅**（`data:text/yaml;base64,...`）：含 proxies + 自动选择/手动选择分组 + 基础分流规则，适配 Clash Verge / Mihomo / OpenClash / 小火箭
+- **Sing-box 订阅**（`data:application/json;base64,...`）：官方客户端（SFA / SFI / SFW）可直接订阅的完整配置
+
+> 三种订阅均为本地生成、零第三方托管。若客户端仅接受 http(s) 订阅，可把 YAML / JSON 内容保存为文件后本地导入。
 
 ## 删除 / 修改节点（菜单 4/5）
 
