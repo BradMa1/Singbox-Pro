@@ -30,21 +30,24 @@ _install_shortcut() {
     fi
 }
 
+# --- 模块清单 (SSOT, 单一数据源) ---
+# 新增 lib 模块时只需改这一处: _load_modules / install.sh / _sb_upgrade_scripts
+# 均从此派生, 不再手动维护多份白名单 (曾因漏加 cert.sh 导致升级后启动即致命缺失)。
+_SB_LIB_MODULES=(
+    "core.sh"
+    "singbox.sh"
+    "protocols.sh"
+    "cert.sh"
+    "argo.sh"
+    "warp.sh"
+    "relay.sh"
+    "ui.sh"
+)
+
 # --- 加载模块 ---
 _load_modules() {
-    local modules=(
-        "core.sh"
-        "singbox.sh"
-        "protocols.sh"
-        "cert.sh"
-        "argo.sh"
-        "warp.sh"
-        "relay.sh"
-        "ui.sh"
-    )
-
     local missing=""
-    for mod in "${modules[@]}"; do
+    for mod in "${_SB_LIB_MODULES[@]}"; do
         if [ -f "${LIB_DIR}/${mod}" ]; then
             source "${LIB_DIR}/${mod}"
         else

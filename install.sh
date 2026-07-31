@@ -285,8 +285,8 @@ _step_scripts() {
         _err "sb.sh 下载失败"
     fi
 
-    # 下载模块
-    local modules=("core.sh" "singbox.sh" "protocols.sh" "argo.sh" "warp.sh" "relay.sh" "ui.sh")
+    # 下载模块 (与 sb.sh 的 _SB_LIB_MODULES 保持一致, 新增模块需同步)
+    local modules=("core.sh" "singbox.sh" "protocols.sh" "cert.sh" "argo.sh" "warp.sh" "relay.sh" "ui.sh")
     for mod in "${modules[@]}"; do
         if _dl_with_fallback "${REPO_RAW}/lib/${mod}" "${LIB_DIR}/${mod}" "lib/${mod}"; then
             echo -e "  ${GREEN}√${NC} lib/${mod}"

@@ -736,16 +736,12 @@ _sb_upgrade_scripts() {
     local backup_dir="${lib_dir}/../.backup.$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
 
-    local files_to_upgrade=(
-        "sb.sh|${repo}/sb.sh"
-        "lib/core.sh|${repo}/lib/core.sh"
-        "lib/singbox.sh|${repo}/lib/singbox.sh"
-        "lib/protocols.sh|${repo}/lib/protocols.sh"
-        "lib/argo.sh|${repo}/lib/argo.sh"
-        "lib/warp.sh|${repo}/lib/warp.sh"
-        "lib/relay.sh|${repo}/lib/relay.sh"
-        "lib/ui.sh|${repo}/lib/ui.sh"
-    )
+    # 升级文件清单从 SSOT (_SB_LIB_MODULES) 派生, 与 _load_modules 共用同一份模块列表,
+    # 避免在多处手动维护白名单导致的"漏加新模块"致命 bug (详见 cert.sh 事故)。
+    local files_to_upgrade=("sb.sh|${repo}/sb.sh")
+    for mod in "${_SB_LIB_MODULES[@]}"; do
+        files_to_upgrade+=("lib/${mod}|${repo}/lib/${mod}")
+    done
 
     local success=0 fail=0
     for entry in "${files_to_upgrade[@]}"; do
