@@ -17,14 +17,57 @@ fi
 SCRIPT_VERSION="${SCRIPT_VERSION:-${PROJECT_VERSION}}"
 
 # ============================================================
+# 字符串工具 (CJK-aware 显示宽度 + 右补空格)
+# ============================================================
+
+# 计算 UTF-8 字符串的终端显示宽度 (CJK/全角=2, ASCII=1)
+# 注意: bash 3.2 (macOS 默认) 的 printf '%d' "'$ch" 返回的是字节值不是码点,
+# 改用 [[ =~ ]] 字节级判断, 跨 bash 3.2/4+/5+ 均准确
+_str_display_width() {
+    local s="$1" w=0 i=0 ch
+    while [ "$i" -lt "${#s}" ]; do
+        ch="${s:$i:1}"
+        if [[ "$ch" == *[^[:ascii:]]* ]]; then
+            # 任一字节 >= 0x80 (CJK/日韩/全角符号) → 2 宽
+            w=$((w + 2))
+        else
+            w=$((w + 1))
+        fi
+        i=$((i + 1))
+    done
+    printf '%d' "$w"
+}
+
+# 把字符串用空格右补足到目标显示宽度 (用于菜单中英文混排对齐)
+_str_pad_cjk() {
+    local s="$1" target="$2"
+    local cur
+    cur=$(_str_display_width "$s")
+    local pad=$((target - cur))
+    [ "$pad" -lt 1 ] && pad=0
+    printf '%s%*s' "$s" "$pad" ""
+}
+
+# ============================================================
 # 顶部横幅
 # ============================================================
 
 _ui_banner() {
     clear
+    # 每次渲染从磁盘 lib/core.sh 重读 PROJECT_VERSION,
+    # 升级脚本后回到主菜单即可看到新版本, 无需退出 sb 重启
+    # 不依赖外部 SCRIPT_DIR 变量, 直接用 BASH_SOURCE[0] 推项目根
+    local real_version="${SCRIPT_VERSION}"
+    local _lib_dir
+    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    if [ -n "$_lib_dir" ] && [ -f "$_lib_dir/core.sh" ]; then
+        real_version=$(grep -oE 'PROJECT_VERSION="[^"]+"' "$_lib_dir/core.sh" 2>/dev/null \
+            | head -1 | sed -E 's/PROJECT_VERSION="([^"]+)"/\1/')
+    fi
+    [ -z "$real_version" ] && real_version="${PROJECT_VERSION:-2.2.x}"
+
     local w=48  # 内部宽度
-    local v="$SCRIPT_VERSION"
-    local l1="Singbox-Pro   v${v}"
+    local l1="Singbox-Pro   v${real_version}"
     local l2="Multi-Protocol Proxy"
 
     # 动态计算居中 padding
@@ -82,9 +125,11 @@ _ui_main_menu() {
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "  ${CYAN}【节点管理】${NC}"
-        echo -e "    ${GREEN}[1]${NC} 添加节点          ${GREEN}[2]${NC} Argo 隧道节点"
-        echo -e "    ${GREEN}[3]${NC} 查看节点链接      ${GREEN}[4]${NC} 删除节点"
-        echo -e "    ${GREEN}[5]${NC} 修改节点          ${GREEN}[6]${NC} 节点分享(订阅+二维码)"
+        # 左列目标显示宽度=24 (含 [N] 标签 4 宽 + 标签后 1 空格 + 菜单名)
+        local W=24
+        echo -e "    ${GREEN}[1]${NC} $(_str_pad_cjk "添加节点" $W)${GREEN}[2]${NC} Argo 隧道节点"
+        echo -e "    ${GREEN}[3]${NC} $(_str_pad_cjk "修改节点" $W)${GREEN}[4]${NC} 删除节点"
+        echo -e "    ${GREEN}[5]${NC} $(_str_pad_cjk "查看节点链接" $W)${GREEN}[6]${NC} 节点分享(订阅+二维码)"
         echo ""
 
         echo -e "  ${CYAN}【服务控制】${NC}"
@@ -97,8 +142,10 @@ _ui_main_menu() {
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
-        echo -e "    ${GREEN}[13]${NC} 安装/更新核心(内核)  ${RED}[14]${NC} 卸载脚本"
-        echo -e "    ${GREEN}[15]${NC} 健康检查          ${GREEN}[16]${NC} 升级脚本(脚本)"
+        # 左列目标显示宽度=34 (含 [N] 标签 4 宽 + 标签后 1 空格 + 菜单名 + 提示括号)
+        local M=34
+        echo -e "    ${GREEN}[13]${NC} $(_str_pad_cjk "安装/更新核心(sing-box 内核)" $M)${RED}[14]${NC} 卸载脚本(清理所有配置)"
+        echo -e "    ${GREEN}[15]${NC} $(_str_pad_cjk "健康检查(端口/配置/服务诊断)" $M)${GREEN}[16]${NC} 升级脚本(lib 模块+sb.sh)"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
@@ -110,9 +157,9 @@ _ui_main_menu() {
         case $choice in
             1) _ui_add_node_menu ;;
             2) _ui_argo_menu ;;
-            3) _ui_view_nodes ;;
+            3) _ui_modify_node ;;
             4) _ui_delete_node ;;
-            5) _ui_modify_node ;;
+            5) _ui_view_nodes ;;
             6) _ui_subscription ;;
             7) _ui_restart_service ;;
             8) _ui_stop_service ;;
