@@ -765,8 +765,9 @@ _sb_upgrade_scripts() {
             echo -e "  ${GREEN}✓${NC} ${fname}"
             success=$((success + 1))
         else
-            # 镜像回退
-            local fmirror="${furl/${repo}/${mirror}}"
+            # 镜像回退 (修复 v2.2.5): 原代码引用未定义变量 ${mirror} → set -u 下 unbound
+            # 直接崩溃, 且拼接逻辑错误。应直接用 GH_PROXY 前缀拼接完整 URL。
+            local fmirror="${GH_PROXY:-https://ghproxy.net/}${furl}"
             if curl -fsSL --connect-timeout 15 --max-time 60 "$fmirror" -o "$target" 2>/dev/null; then
                 [ -x "$target" ] || chmod +x "$target"
                 echo -e "  ${GREEN}✓${NC} ${fname} (镜像)"
@@ -870,7 +871,12 @@ _sb_health_check() {
             jq -c '.inbounds[]' "$CONFIG_FILE" 2>/dev/null | while IFS= read -r node; do
                 local ntype=$(echo "$node" | jq -r '.type')
                 local nport=$(echo "$node" | jq -r '.listen_port')
-                if _verify_port_listen "$nport" "${ntype}"; then
+                # 修复 (v2.2.5): _verify_port_listen 第二参必须传 tcp/udp 字面量,
+                # 原代码误传协议名 (如 vless/anytls) → 一律走 UDP 分支 → TCP 节点全误报「未监听」。
+                # tuic/hysteria2 走 UDP, 其余 (vless/anytls/trojan/vmess/ss/socks) 走 TCP。
+                local lproto="tcp"
+                case "$ntype" in tuic|hysteria2) lproto="udp" ;; esac
+                if _verify_port_listen "$nport" "$lproto"; then
                     echo -e "    ${GREEN}✓${NC} ${ntype}:${nport} (监听正常)"
                 else
                     echo -e "    ${RED}✗${NC} ${ntype}:${nport} (端口未监听)"

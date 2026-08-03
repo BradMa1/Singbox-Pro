@@ -202,7 +202,7 @@ _ui_add_node_menu() {
     echo -e "    ${YELLOW}[0]${NC} 返回"
     echo ""
 
-    read -r -p "  请输入选项 [0-4]: " proto_choice
+    read -r -p "  请输入选项 [1-7] (0 返回): " proto_choice
     proto_choice=$(echo "$proto_choice" | xargs 2>/dev/null)
     [ -z "$proto_choice" ] && proto_choice="1 2 3 4"
 
@@ -1448,6 +1448,32 @@ _ui_view_nodes() {
                 echo -e "      标准 vmess:// (小火箭): ${GREEN}${std}${NC}"
                 echo -e "      完整 Xray 配置 (v2rayN): ${GREEN}${full}${NC}"
                 echo -e "      ${YELLOW}已用 pinnedPeerCertificateChainSha256 证书固定, 无需勾选「跳过证书验证」(Xray 8/1 后仍可连)${NC}"
+                ;;
+            trojan)
+                # 修复 (v2.2.5): 查看节点链接漏掉 Trojan/SS2022/SOCKS5 三协议 → 链接不显示
+                local pw=$(echo "$line" | jq -r '.users[0].password // empty')
+                local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
+                local insecure=$(jq -r ".protocols.\"$tag\".insecure // \"1\"" "$METADATA_FILE" 2>/dev/null || echo "1")
+                local uri=$(_proto_trojan_uri "$pw" "$server_ip" "$port" "$name" "${sni:-$server_ip}" "$insecure")
+                echo -e "      链接: ${GREEN}${uri}${NC}"
+                if [ "${insecure:-1}" = "0" ]; then
+                    echo -e "      ${GREEN}↑ Trojan over TLS, 真证书 HTTPS 外形已激活 (客户端无需 insecure)${NC}"
+                else
+                    echo -e "      ${YELLOW}↑ 当前为自签证书: stealth 未激活, 运行 sb cert issue <域名> 升级真证书${NC}"
+                fi
+                ;;
+            shadowsocks)
+                local psk=$(echo "$line" | jq -r '.password // empty')
+                local method=$(echo "$line" | jq -r '.method // "2022-blake3-aes-256-gcm"')
+                local uri=$(_proto_ss2022_uri "$method" "$psk" "$server_ip" "$port" "$name")
+                echo -e "      链接: ${GREEN}${uri}${NC}"
+                ;;
+            socks)
+                local u=$(echo "$line" | jq -r '.users[0].username // empty')
+                local p=$(echo "$line" | jq -r '.users[0].password // empty')
+                local uri=$(_proto_socks5_uri "$u" "$p" "$server_ip" "$port" "$name")
+                echo -e "      链接: ${GREEN}${uri}${NC}"
+                echo -e "      ${YELLOW}↑ 明文 SOCKS5(带认证), 仅建议本地/可信网络/中转跳板使用${NC}"
                 ;;
         esac
         echo ""

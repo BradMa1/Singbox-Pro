@@ -183,9 +183,11 @@ main() {
 
         cert)
             # v2.2.0 新增: acme.sh 真实证书签发 (Trojan 真证书 HTTPS 外形用)
+            # 修复 (v2.2.5): "$4" 在 sb cert issue <域名> (仅 3 个位置参数) 时 unbound,
+            # set -u 直接崩溃 → acme 证书功能完全不可用。改为全默认值展开。
             _check_deps
             _load_modules
-            _cert_cli "$2" "$3" "$4"
+            _cert_cli "${2:-}" "${3:-}" "${4:-}"
             ;;
 
         install)

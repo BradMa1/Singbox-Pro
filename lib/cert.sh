@@ -282,18 +282,22 @@ _cert_list() {
 # ============================================================
 # CLI 入口 (供 sb cert 命令调用)
 # ============================================================
+# 注意: 不用 shift 传递子命令参数 — bash 中 `shift 2>/dev/null` 会把 `2>`
+# 解析成 fd2 重定向, 实际只 shift 1 位 (行为碰巧正确但极脆弱易错)。
+# 改为显式取 $2/$3 更清晰且不依赖解析陷阱。
 _cert_cli() {
-    local sub="${1:-status}"; shift 2>/dev/null || true
+    local sub="${1:-status}"
+    local arg1="${2:-}" arg2="${3:-}"
     case "$sub" in
         issue)
-            local domain="${1:-}" email="${2:-}"
+            local domain="$arg1" email="$arg2"
             [ -z "$domain" ] && { _error "用法: sb cert issue <域名> [邮箱]"; return 1; }
             if _cert_acme_issue "$domain" "$email"; then
                 _cert_rewrite_trojan_nodes "$domain"
             fi
             ;;
         renew)
-            _cert_acme_renew "${1:-}"
+            _cert_acme_renew "$arg1"
             ;;
         list)
             _cert_list
