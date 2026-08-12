@@ -268,7 +268,7 @@ _cert_cf_guide() {
     5) Client IP Address Filtering / TTL : 保持默认（不填）
     6) Continue to summary → Create Token
     7) 复制生成的 Token（只显示一次！格式类似 cfut_xxxx...）
-  🔒 这是「区域级」最小权限 token，比 Global API Key 安全，用完可随时删除。
+  🔒 这是「区域级」最小权限 token，比 Global API Key 安全，但请不要删除它——acme.sh 90 天后自动续期证书时仍需要用它来添加 _acme-challenge 记录。如果删除了，续期会失败，证书会过期。
 
 ------------------------------------------------------------------
  第 3 步：获取 Account ID
