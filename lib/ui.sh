@@ -146,13 +146,14 @@ _ui_main_menu() {
         local M=34
         echo -e "    ${GREEN}[13]${NC} $(_str_pad_cjk "安装/更新核心(sing-box 内核)" $M)${RED}[14]${NC} 卸载脚本(清理所有配置)"
         echo -e "    ${GREEN}[15]${NC} $(_str_pad_cjk "健康检查(端口/配置/服务诊断)" $M)${GREEN}[16]${NC} 升级脚本(lib 模块+sb.sh)"
+        echo -e "    ${GREEN}[17]${NC} 证书管理(ACME 真实证书)"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-16]: " choice
+        read -p "  请输入选项 [0-17]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -171,7 +172,54 @@ _ui_main_menu() {
             14) _ui_uninstall ;;
             15) _ui_health_check ;;
             16) _ui_upgrade_scripts ;;
+            17) _ui_cert_menu ;;
             0) echo "再见!"; exit 0 ;;
+            *) _warn "无效选项，请重试"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================================================
+# 证书管理菜单
+# ============================================================
+
+_ui_cert_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=== 证书管理 ===${NC}"
+        echo ""
+        echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
+        echo -e "    ${GREEN}[2]${NC} Cloudflare DNS-01 设置指引"
+        echo -e "    ${GREEN}[3]${NC} 列出已签发证书"
+        echo -e "    ${GREEN}[4]${NC} 查看证书状态"
+        echo -e "    ${GREEN}[5]${NC} 续期证书"
+        echo -e "    ${YELLOW}[0]${NC} 返回"
+        echo ""
+        read -r -p "  请输入选项 [0-5]: " cert_choice
+        cert_choice=$(echo "$cert_choice" | xargs 2>/dev/null)
+
+        case "$cert_choice" in
+            1)
+                read -r -p "  请输入域名 (如 hk.example.com): " domain
+                domain=$(echo "$domain" | xargs 2>/dev/null)
+                if [ -n "$domain" ]; then
+                    _cert_cli issue "$domain"
+                else
+                    _warn "域名不能为空"
+                    sleep 1
+                fi
+                read -p "按回车键继续..."
+                ;;
+            2) _cert_cli guide; read -p "按回车键继续..." ;;
+            3) _cert_cli list; read -p "按回车键继续..." ;;
+            4) _cert_cli status; read -p "按回车键继续..." ;;
+            5)
+                read -r -p "  请输入域名 (直接回车续期全部): " domain
+                domain=$(echo "$domain" | xargs 2>/dev/null)
+                _cert_cli renew "$domain"
+                read -p "按回车键继续..."
+                ;;
+            0) return ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
     done
@@ -198,13 +246,13 @@ _ui_add_node_menu() {
     echo -e "    ${GREEN}[6]${NC} Shadowsocks 2022 (AEAD, 轻量兜底/老设备)"
     echo -e "    ${GREEN}[7]${NC} SOCKS5           (明文, 带认证, 作跳板/本地代理)"
     echo ""
-    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3 5)，直接回车 = 默认 4 协议 (Reality/AnyTLS/TUIC/Hy2)${NC}"
+    echo -e "  ${YELLOW}提示: 支持多选，用空格分隔 (如 1 3 5)，直接回车 = 默认全部 7 协议${NC}"
     echo -e "    ${YELLOW}[0]${NC} 返回"
     echo ""
 
     read -r -p "  请输入选项 [1-7] (0 返回): " proto_choice
     proto_choice=$(echo "$proto_choice" | xargs 2>/dev/null)
-    [ -z "$proto_choice" ] && proto_choice="1 2 3 4"
+    [ -z "$proto_choice" ] && proto_choice="1 2 3 4 5 6 7"
 
     local selected=()
     for ch in $proto_choice; do
