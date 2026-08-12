@@ -129,17 +129,16 @@ _cert_acme_issue() {
         fi
         echo "$acme_out" | tail -3
     else
-        _warn "未检测到 DNS API 变量 (CF_Token/CF_Account_ID 等), 将尝试 standalone 模式 (需 80 端口公网可达)。"
-        _warn "如需改用 DNS-01 (推荐, 无需开端口), 请先在 Cloudflare 设置并 export 变量后重跑; 步骤: sb cert guide"
-        _info "使用 standalone 模式签发 (需 80 端口公网可达)..."
+        _warn "未检测到 DNS API 变量 (CF_Token/CF_Account_ID 等)。"
+        _info "推荐改用 DNS-01 模式 (无需开放 80 端口), 设置步骤如下, 设置并 export 变量后重跑本命令即可:"
+        _cert_cf_guide
+        _info "若本机 80 端口公网可达, 也可直接尝试 standalone 模式..."
         local acme_out
         acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1)
         local rc=$?
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
         if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
-            _error "standalone 签发失败。常见原因: 80 端口被占用/未放行, 或域名未解析到本机。"
-            _info "推荐改用 DNS-01 模式 (无需开放端口, 仅需 Cloudflare 设置)。完整步骤："
-            _cert_cf_guide
+            _error "standalone 签发失败 (80 端口不可达或域名未解析到本机)。请按上方指引配置 DNS-01 后重跑。"
             return 1
         fi
         echo "$acme_out" | tail -3

@@ -190,13 +190,12 @@ _ui_cert_menu() {
         echo -e "${YELLOW}  提示: 证书由 acme.sh 定时任务自动续期，[5] 仅用于手动强制续期${NC}"
         echo ""
         echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
-        echo -e "    ${GREEN}[2]${NC} Cloudflare DNS-01 设置指引"
-        echo -e "    ${GREEN}[3]${NC} 列出已签发证书"
-        echo -e "    ${GREEN}[4]${NC} 查看证书状态"
-        echo -e "    ${GREEN}[5]${NC} 续期证书 (自动续期失败时手动用)"
+        echo -e "    ${GREEN}[2]${NC} 列出已签发证书"
+        echo -e "    ${GREEN}[3]${NC} 查看证书状态"
+        echo -e "    ${GREEN}[4]${NC} 续期证书 (自动续期失败时手动用)"
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
-        read -r -p "  请输入选项 [0-5]: " cert_choice
+        read -r -p "  请输入选项 [0-4]: " cert_choice
         cert_choice=$(echo "$cert_choice" | xargs 2>/dev/null)
 
         case "$cert_choice" in
@@ -211,10 +210,9 @@ _ui_cert_menu() {
                 fi
                 read -p "按回车键继续..."
                 ;;
-            2) _cert_cli guide; read -p "按回车键继续..." ;;
-            3) _cert_cli list; read -p "按回车键继续..." ;;
-            4) _cert_cli status; read -p "按回车键继续..." ;;
-            5)
+            2) _cert_cli list; read -p "按回车键继续..." ;;
+            3) _cert_cli status; read -p "按回车键继续..." ;;
+            4)
                 read -r -p "  请输入域名 (直接回车续期全部): " domain
                 domain=$(echo "$domain" | xargs 2>/dev/null)
                 _cert_cli renew "$domain"
