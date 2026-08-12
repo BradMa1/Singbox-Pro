@@ -391,7 +391,23 @@ _cert_save_meta() {
 _cert_list() {
     [ ! -f "$CERT_META_FILE" ] && { echo "暂无 acme 证书"; return 0; }
     _info "已签发 acme 证书:"
-    jq -r 'to_entries[] | "  \(.key)  (cert: \(.value.cert))"' "$CERT_META_FILE" 2>/dev/null || echo "  (元数据解析失败)"
+    local domains cert_path expiry
+    domains=$(jq -r 'keys[]' "$CERT_META_FILE" 2>/dev/null)
+    if [ -z "$domains" ]; then
+        echo "  (暂无)"
+        return 0
+    fi
+    while IFS= read -r domain; do
+        [ -z "$domain" ] && continue
+        cert_path=$(jq -r --arg d "$domain" '.[$d].cert // empty' "$CERT_META_FILE" 2>/dev/null)
+        if [ -f "$cert_path" ] && command -v openssl >/dev/null 2>&1; then
+            expiry=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | cut -d= -f2)
+            expiry=$(date -d "$expiry" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$expiry")
+        else
+            expiry="未知"
+        fi
+        echo "  ${domain}  过期: ${expiry}  cert: ${cert_path}"
+    done <<< "$domains"
 }
 
 # ============================================================
