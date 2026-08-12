@@ -155,8 +155,10 @@ _cert_acme_issue() {
         local rc=$?
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
         if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
-            _error "DNS 模式签发失败，请检查 CF_Token / CF_Account_ID 是否正确，且域名已正确解析到本机。"
-            _info "运行 'sb cert guide' 可查看 Cloudflare 详细设置步骤："
+            _error "DNS 模式签发失败，acme.sh 原始错误如下（请重点看最后几行的 'invalid'/'permission'/'not found' 等关键字）："
+            echo "$acme_out" | tail -15
+            _info "常见原因: ① API Token 没给 DNS 编辑权限 ② Token 选错 Zone ③ 域名未解析到本机 ④ 子域名和 Zone 不匹配。"
+            _info "运行 'sb cert guide' 可查看 Cloudflare 详细设置步骤。"
             _cert_cf_guide
             return 1
         fi
@@ -249,11 +251,17 @@ _cert_cf_guide() {
  第 2 步：创建 API Token（仅供 acme.sh 自动加 _acme-challenge 记录）
 ------------------------------------------------------------------
   Cloudflare 后台 → 右上头像 → My Profile → API Tokens → Create Token
-    1) 使用模板 "Edit zone DNS"
-    2) Permissions   : Zone → DNS → Edit
-    3) Zone Resources: Include → Specific zone → 选你第 1 步的域名
-    4) Continue to summary → Create Token
-    5) 复制生成的 Token（只显示一次！）
+    1) 使用模板 "Edit zone DNS"（页面往下拉，在 "Custom token" 上方找到该模板并点 "Use template"）
+    2) Token name   : 随便写，例如 "acme-dns-01"
+    3) Permissions  : Zone → DNS → Edit
+    4) Zone Resources: Include → Specific zone → 选择你的 **根域名/Zone**
+       ⚠️ 关键：这里要选托管域名的 **Zone**，不是子域名！
+         • 如果你的子域名是 us.brad.dpdns.org → Zone 要选 brad.dpdns.org
+         • 如果你的子域名是 hk.example.com     → Zone 要选 example.com
+       只有 Zone 对了，acme.sh 才能往该域名下添加 _acme-challenge 验证记录。
+    5) Client IP Address Filtering / TTL : 保持默认（不填）
+    6) Continue to summary → Create Token
+    7) 复制生成的 Token（只显示一次！格式类似 cfut_xxxx...）
   🔒 这是「区域级」最小权限 token，比 Global API Key 安全，用完可随时删除。
 
 ------------------------------------------------------------------
