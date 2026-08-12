@@ -293,13 +293,17 @@ _proto_trojan_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local sni="${5:-$server_ip}"
     local insecure="${6:-1}"
-    # 进阶(真实证书): 自动关 insecure 且 sni 用域名; 默认(自签): IP + insecure=1
+    # 进阶(真实证书): host/sni 改用域名且去掉 insecure; 默认(自签): IP + insecure=1
+    local host="$server_ip"
     if _real_cert_ready; then
         insecure="0"
-        [ -n "${SERVER_DOMAIN:-}" ] && sni="$SERVER_DOMAIN"
+        if [ -n "${SERVER_DOMAIN:-}" ]; then
+            host="$SERVER_DOMAIN"
+            sni="$SERVER_DOMAIN"
+        fi
     fi
     local ep=$(_url_encode "$name")
-    echo -n "trojan://${password}@${server_ip}:${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
+    echo -n "trojan://${password}@${host}:${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
 }
 
 # ============================================================

@@ -1545,6 +1545,12 @@ _build_clash_yaml() {
     local server_ip="${1:-$(_get_public_ip)}"
     local -a names=()
     local proxies=""
+    # 真实证书生效时: TLS 节点 server 用域名且关闭 skip-cert-verify
+    local tls_host="$server_ip" tls_skip="true"
+    if _real_cert_ready && [ -n "${SERVER_DOMAIN:-}" ]; then
+        tls_host="$SERVER_DOMAIN"
+        tls_skip="false"
+    fi
 
     while IFS= read -r line; do
         local tag=$(echo "$line" | jq -r .tag)
@@ -1588,17 +1594,17 @@ EOF
                     block=$(cat <<EOF
   - name: "$name"
     type: vless
-    server: $server_ip
+    server: $tls_host
     port: $port
     uuid: $uuid
     network: ws
     tls: true
     udp: true
     client-fingerprint: chrome
-    servername: ${sni:-$server_ip}
+    servername: ${sni:-$tls_host}
     ws-opts:
       path: $ws_path
-    skip-cert-verify: true
+    skip-cert-verify: $tls_skip
 EOF
 )
                 fi
@@ -1608,13 +1614,13 @@ EOF
                 block=$(cat <<EOF
   - name: "$name"
     type: anytls
-    server: $server_ip
+    server: $tls_host
     port: $port
     password: $pw
     client-fingerprint: chrome
     tls: true
     udp: true
-    skip-cert-verify: true
+    skip-cert-verify: $tls_skip
 EOF
 )
                 ;;
@@ -1624,18 +1630,18 @@ EOF
                 block=$(cat <<EOF
   - name: "$name"
     type: tuic
-    server: $server_ip
+    server: $tls_host
     port: $port
     uuid: $uuid
     password: $pw
-    ip: $server_ip
-    sni: $server_ip
+    ip: $tls_host
+    sni: $tls_host
     alpn:
       - h3
     disable-sni: false
     reduce-rtt: true
     udp: true
-    skip-cert-verify: true
+    skip-cert-verify: $tls_skip
 EOF
 )
                 ;;
@@ -1644,34 +1650,33 @@ EOF
                 block=$(cat <<EOF
   - name: "$name"
     type: hysteria2
-    server: $server_ip
+    server: $tls_host
     port: $port
     password: $pw
-    sni: $server_ip
+    sni: $tls_host
     alpn:
       - h3
     udp: true
-    skip-cert-verify: true
+    skip-cert-verify: $tls_skip
 EOF
 )
                 ;;
             trojan)
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')
                 local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
-                local insecure=$(jq -r ".protocols.\"$tag\".insecure // \"1\"" "$METADATA_FILE" 2>/dev/null || echo "1")
                 block=$(cat <<EOF
   - name: "$name"
     type: trojan
-    server: $server_ip
+    server: $tls_host
     port: $port
     password: $pw
-    sni: ${sni:-$server_ip}
+    sni: ${sni:-$tls_host}
     alpn:
       - h2
       - http/1.1
     client-fingerprint: chrome
     udp: true
-    skip-cert-verify: $insecure
+    skip-cert-verify: $tls_skip
 EOF
 )
                 ;;
@@ -1759,6 +1764,12 @@ _build_singbox_json() {
     local server_ip="${1:-$(_get_public_ip)}"
     local outbounds="[]"
     local -a tags=()
+    # 真实证书生效时: TLS 节点 server 用域名且关闭 insecure
+    local tls_host="$server_ip" tls_insecure="true"
+    if _real_cert_ready && [ -n "${SERVER_DOMAIN:-}" ]; then
+        tls_host="$SERVER_DOMAIN"
+        tls_insecure="false"
+    fi
 
     while IFS= read -r line; do
         local tag=$(echo "$line" | jq -r .tag)
@@ -1783,27 +1794,26 @@ _build_singbox_json() {
                 else
                     local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
                     local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
-                    obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg sni "${sni:-$server_ip}" --arg path "$ws_path" '{type:"vless",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:true},transport:{type:"ws",path:$path}}')
+                    obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg uuid "$uuid" --arg sni "${sni:-$tls_host}" --arg path "$ws_path" --argjson insecure "$tls_insecure" '{type:"vless",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:$insecure},transport:{type:"ws",path:$path}}')
                 fi
                 ;;
             anytls)
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')
-                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" '{type:"anytls",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:true}}')
+                obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg pw "$pw" --argjson insecure "$tls_insecure" '{type:"anytls",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:$insecure}}')
                 ;;
             tuic)
                 local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')
-                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg pw "$pw" '{type:"tuic",tag:$name,server:$ip,server_port:$port,uuid:$uuid,password:$pw,tls:{enabled:true,alpn:["h3"],insecure:true},congestion_control:"bbr"}')
+                obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg uuid "$uuid" --arg pw "$pw" --argjson insecure "$tls_insecure" '{type:"tuic",tag:$name,server:$ip,server_port:$port,uuid:$uuid,password:$pw,tls:{enabled:true,alpn:["h3"],insecure:$insecure},congestion_control:"bbr"}')
                 ;;
             hysteria2)
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')
-                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" '{type:"hysteria2",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:true}}')
+                obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg pw "$pw" --argjson insecure "$tls_insecure" '{type:"hysteria2",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,insecure:$insecure}}')
                 ;;
             trojan)
                 local pw=$(echo "$line" | jq -r '.users[0].password // empty')
                 local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
-                local insecure=$(jq -r ".protocols.\"$tag\".insecure // 1" "$METADATA_FILE" 2>/dev/null || echo 1)
-                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg pw "$pw" --arg sni "${sni:-$server_ip}" --argjson insecure "$insecure" '{type:"trojan",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,server_name:$sni,insecure:$insecure}}')
+                obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg pw "$pw" --arg sni "${sni:-$tls_host}" --argjson insecure "$tls_insecure" '{type:"trojan",tag:$name,server:$ip,server_port:$port,password:$pw,tls:{enabled:true,server_name:$sni,insecure:$insecure}}')
                 ;;
             shadowsocks)
                 local psk=$(echo "$line" | jq -r '.password // empty')
@@ -1818,7 +1828,7 @@ _build_singbox_json() {
             vmess)
                 local uuid=$(echo "$line" | jq -r '.users[0].uuid // empty')
                 local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
-                obj=$(jq -n --arg name "$name" --arg ip "$server_ip" --argjson port "$port" --arg uuid "$uuid" --arg path "$ws_path" '{type:"vmess",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:true},transport:{type:"ws",path:$path}}')
+                obj=$(jq -n --arg name "$name" --arg ip "$tls_host" --argjson port "$port" --arg uuid "$uuid" --arg path "$ws_path" --argjson insecure "$tls_insecure" '{type:"vmess",tag:$name,server:$ip,server_port:$port,uuid:$uuid,tls:{enabled:true,insecure:$insecure},transport:{type:"ws",path:$path}}')
                 ;;
         esac
         [ -n "$obj" ] && outbounds=$(echo "$outbounds" | jq --argjson o "$obj" '. + [$o]')
