@@ -27,6 +27,8 @@ ACME_BIN="${ACME_BIN:-$HOME/.acme.sh/acme.sh}"
 ACME_HOME="${ACME_HOME:-$HOME/.acme.sh}"
 CERT_META_FILE="${CERT_META_FILE:-${SINGBOX_DIR}/cert_metadata.json}"
 CERT_ACME_DIR="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
+# acme.sh 注册账户（ZeroSSL 默认 CA 需要邮箱做 EAB）所用的邮箱；可用环境变量覆盖
+CERT_EMAIL="${CERT_EMAIL:-admin@example.com}"
 
 # ============================================================
 # acme.sh 安装
@@ -75,10 +77,15 @@ _cert_acme_install() {
 #     例如 Cloudflare: export CF_Token=xxx CF_Account_ID=yyy
 #   - 签发成功后证书复制到 ${CERT_ACME_DIR}/<domain>/ 供 sing-box 使用
 _cert_acme_issue() {
-    local domain="$1" email="${2:-}"
+    local domain="$1" email="${2:-$CERT_EMAIL}"
     [ -z "$domain" ] && { _error "签发证书需要域名"; return 1; }
 
     _cert_acme_install || return 1
+
+    # acme.sh 默认 CA 为 ZeroSSL，签发前必须先用邮箱注册账户（获取 EAB 凭证），
+    # 否则 --issue 会报 "Please update your account with an email address first" 而直接失败。
+    # 已注册则 acme.sh 自动跳过，此步幂等安全。
+    "$ACME_BIN" --register-account -m "$email" >/dev/null 2>&1 || true
 
     # 提前确保 80 端口可达 (standalone)
     if _check_port_occupied 80 "tcp" 2>/dev/null; then
@@ -233,68 +240,22 @@ _cert_acme_issue() {
 _cert_cf_guide() {
     cat <<'EOF'
 
-==================================================================
- Cloudflare DNS-01 证书签发 · 设置指引（DNS-01 无需开放 80 端口）
-==================================================================
+=== Cloudflare DNS-01 设置指引（无需开放 80 端口）===
+1) A 记录：CF 后台 → 你的域名 → DNS → Add record
+     类型 A，名称 <子域前缀，如 us>，IPv4 = 你的 VPS IP，代理选「DNS only / 灰云 ☁️」（橙云会握手失败）
 
-【前置条件】
-  • 你有一个托管在 Cloudflare 的域名（如 example.com）
-  • 准备一个子域名指向本机 VPS，例如 hk.example.com / us.example.com / jp.example.com → 你的 VPS IP
-    （子域名按你机器位置起名即可，HK 机用 hk、US 机用 us，没有强制规则）
+2) API Token：右上头像 → My Profile → API Tokens → Create Token
+     用模板 "Edit zone DNS"；Permissions = Zone→DNS→Edit；
+     Zone Resources = 选你的 **根 Zone**（us.brad.dpdns.org 选 brad.dpdns.org）；
+     复制 Token（cfut_ 开头，只显示一次）。⚠️ 此 Token 不要删，acme.sh 续期还要用。
 
-------------------------------------------------------------------
- 第 1 步：添加 DNS 解析（A 记录）
-------------------------------------------------------------------
-  Cloudflare 后台 → 你的域名 → DNS → Records → Add record
-    类型 Type       : A
-    名称 Name       : <子域名前缀>   （例如 us，完整域名即 us.example.com）
-    IPv4 地址       : 你的 VPS 公网 IP
-    代理状态 Proxy  : ⚠️ 必须选 [DNS only / 灰云 ☁️]，不要开 Proxied（橙云）
-    TTL             : Auto
-  ❗ 橙云会让客户端解析到 Cloudflare 边缘而非你的 VPS，sing-box TLS 握手会失败。
+3) Account ID：任意域名 → Overview 页右侧 "Account ID"
 
-------------------------------------------------------------------
- 第 2 步：创建 API Token（仅供 acme.sh 自动加 _acme-challenge 记录）
-------------------------------------------------------------------
-  Cloudflare 后台 → 右上头像 → My Profile → API Tokens → Create Token
-    1) 使用模板 "Edit zone DNS"（页面往下拉，在 "Custom token" 上方找到该模板并点 "Use template"）
-    2) Token name   : 随便写，例如 "acme-dns-01"
-    3) Permissions  : Zone → DNS → Edit
-    4) Zone Resources: Include → Specific zone → 选择你的 **根域名/Zone**
-       ⚠️ 关键：这里要选托管域名的 **Zone**，不是子域名！
-         • 如果你的子域名是 us.brad.dpdns.org → Zone 要选 brad.dpdns.org
-         • 如果你的子域名是 hk.example.com     → Zone 要选 example.com
-       只有 Zone 对了，acme.sh 才能往该域名下添加 _acme-challenge 验证记录。
-    5) Client IP Address Filtering / TTL : 保持默认（不填）
-    6) Continue to summary → Create Token
-    7) 复制生成的 Token（只显示一次！格式类似 cfut_xxxx...）
-  🔒 这是「区域级」最小权限 token，比 Global API Key 安全，但请不要删除它——acme.sh 90 天后自动续期证书时仍需要用它来添加 _acme-challenge 记录。如果删除了，续期会失败，证书会过期。
-
-------------------------------------------------------------------
- 第 3 步：获取 Account ID
-------------------------------------------------------------------
-  Cloudflare 后台 → 任意域名 → Overview（概览）页 → 右侧栏 "Account ID"
-  （你名下所有域名共用同一个 Account ID）
-
-------------------------------------------------------------------
- 第 4 步：在 VPS 上导出变量并签发
-------------------------------------------------------------------
-  export CF_Token="粘贴第 2 步的 Token"
-  export CF_Account_ID="粘贴第 3 步的 Account ID"
-  sb cert issue <你的子域名>.example.com
-  # 示例：HK 机用 sb cert issue hk.example.com，US 机用 sb cert issue us.example.com
-
-  ✅ 签发成功后证书自动落到 sing-box，客户端关掉「跳过证书验证」即可。
-
-【安全提醒】
-  • CF_Token / CF_Account_ID 仅存在于你本次 shell 会话，不会被写进脚本或仓库。
-  • 每位使用者请用自己的 Cloudflare 账号，不要共用同一把 token。
-  • acme.sh 会在本机 ~/.acme.sh/ 保存 token 用于 90 天后自动续期（仅你本机）。
-
-【其他 DNS 服务商】
-  脚本同样支持：阿里云（Ali_Key）、腾讯 DNSPod（DP_Id）、Gandi、OCI（OCI_）
-  —— 改用对应环境变量即可，步骤类似。
-==================================================================
+4) VPS 上导出并签发：
+     export CF_Token="第2步的 Token"
+     export CF_Account_ID="第3步的 Account ID"
+     sb cert issue us.brad.dpdns.org      # 换成你的子域名即可
+     （acme.sh 自动加 _acme-challenge 记录，成功后证书落到 sing-box）
 
 EOF
 }
