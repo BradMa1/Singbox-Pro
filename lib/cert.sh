@@ -27,8 +27,6 @@ ACME_BIN="${ACME_BIN:-$HOME/.acme.sh/acme.sh}"
 ACME_HOME="${ACME_HOME:-$HOME/.acme.sh}"
 CERT_META_FILE="${CERT_META_FILE:-${SINGBOX_DIR}/cert_metadata.json}"
 CERT_ACME_DIR="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
-# 你的 Cloudflare Account ID (非机密, CF 后台可见)。任何人可用环境变量覆盖, 避免硬编码进他仓库。
-CERT_CF_ACCOUNT_ID_DEFAULT="${CERT_CF_ACCOUNT_ID_DEFAULT:-72031701f741ca2f0d287c2d6fdf750a}"
 
 # ============================================================
 # acme.sh 安装
@@ -109,20 +107,27 @@ _cert_acme_issue() {
             local CF_Token="" CF_Account_ID=""
             _info "需要输入两个不同字段："
             _info "  1) API Token: 从 Cloudflare 后台 'My Profile → API Tokens' 创建，格式如 cfut_...（长串、以 cfut_ 开头）"
-            _info "  2) Account ID: 你的 CF 账户 ID，已预填在方括号内，直接回车即可"
+            _info "  2) Account ID: 你的 CF 账户 ID，在 CF 后台任意域名 Overview 页右侧可复制"
             while [ -z "$CF_Token" ]; do
                 read -r -p "Cloudflare API Token: " CF_Token
                 CF_Token="$(echo "$CF_Token" | tr -d '[:space:]')"
                 if [ -z "$CF_Token" ]; then
                     _warn "API Token 不能为空，请重新输入"
-                elif [ "$CF_Token" = "$CERT_CF_ACCOUNT_ID_DEFAULT" ]; then
-                    _warn "你输入的是 Account ID，不是 API Token！请重新输入以 cfut_ 开头的 Token"
+                elif echo "$CF_Token" | grep -qiE '^[0-9a-f]{32}$'; then
+                    _warn "你输入的是 32 位十六进制字符串（很像 Account ID），不是 API Token！请重新输入以 cfut_ 开头的 Token"
                     CF_Token=""
                 fi
             done
-            read -r -p "Cloudflare Account ID [${CERT_CF_ACCOUNT_ID_DEFAULT}]: " CF_Account_ID
-            CF_Account_ID="${CF_Account_ID:-${CERT_CF_ACCOUNT_ID_DEFAULT}}"
-            CF_Account_ID="$(echo "$CF_Account_ID" | tr -d '[:space:]')"
+            while [ -z "$CF_Account_ID" ]; do
+                read -r -p "Cloudflare Account ID: " CF_Account_ID
+                CF_Account_ID="$(echo "$CF_Account_ID" | tr -d '[:space:]')"
+                if [ -z "$CF_Account_ID" ]; then
+                    _warn "Account ID 不能为空，请重新输入"
+                elif ! echo "$CF_Account_ID" | grep -qiE '^[0-9a-f]{32}$'; then
+                    _warn "Account ID 应为 32 位十六进制字符串，请检查后重新输入"
+                    CF_Account_ID=""
+                fi
+            done
             export CF_Token CF_Account_ID
             if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
                 dns_mode="detected"
@@ -226,7 +231,7 @@ _cert_acme_issue() {
 # 用法: _cert_cf_guide  —  打印在 Cloudflare 后台完成 DNS 记录 / API Token / Account ID
 #        三步设置的完整步骤, 让用户无需查文档也会配。
 _cert_cf_guide() {
-    cat <<EOF
+    cat <<'EOF'
 
 ==================================================================
  Cloudflare DNS-01 证书签发 · 设置指引（DNS-01 无需开放 80 端口）
@@ -234,14 +239,15 @@ _cert_cf_guide() {
 
 【前置条件】
   • 你有一个托管在 Cloudflare 的域名（如 example.com）
-  • 准备一个子域名指向本机 VPS，例如 hk.example.com → 你的 VPS IP
+  • 准备一个子域名指向本机 VPS，例如 hk.example.com / us.example.com / jp.example.com → 你的 VPS IP
+    （子域名按你机器位置起名即可，HK 机用 hk、US 机用 us，没有强制规则）
 
 ------------------------------------------------------------------
  第 1 步：添加 DNS 解析（A 记录）
 ------------------------------------------------------------------
   Cloudflare 后台 → 你的域名 → DNS → Records → Add record
     类型 Type       : A
-    名称 Name       : hk            （完整域名即 hk.example.com）
+    名称 Name       : <子域名前缀>   （例如 us，完整域名即 us.example.com）
     IPv4 地址       : 你的 VPS 公网 IP
     代理状态 Proxy  : ⚠️ 必须选 [DNS only / 灰云 ☁️]，不要开 Proxied（橙云）
     TTL             : Auto
@@ -274,8 +280,9 @@ _cert_cf_guide() {
  第 4 步：在 VPS 上导出变量并签发
 ------------------------------------------------------------------
   export CF_Token="粘贴第 2 步的 Token"
-  export CF_Account_ID="${CERT_CF_ACCOUNT_ID_DEFAULT}"
-  sb cert issue hk.example.com
+  export CF_Account_ID="粘贴第 3 步的 Account ID"
+  sb cert issue <你的子域名>.example.com
+  # 示例：HK 机用 sb cert issue hk.example.com，US 机用 sb cert issue us.example.com
 
   ✅ 签发成功后证书自动落到 sing-box，客户端关掉「跳过证书验证」即可。
 
