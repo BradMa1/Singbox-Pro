@@ -99,20 +99,50 @@ _cert_acme_issue() {
 
     if [ -n "$dns_mode" ]; then
         _info "检测到 DNS API 环境变量，使用 DNS-01 挑战 (无需开放 80 端口)..."
-        # 让 acme.sh 自己根据环境变量选 DNS 插件 (--dns dns_cf 等需对应插件,
-        # 这里采用 acme.sh 的自动识别: 仅传 --dns 由环境变量驱动时不指定具体插件,
-        # 实际由 acme.sh 按变量后缀推断; 为稳妥这里交给用户确保变量正确)
-        if ! "$ACME_BIN" "${issue_args[@]}" --dns ; then
-            _error "DNS 模式签发失败，请检查 DNS API 环境变量是否正确"
+        # 根据环境变量自动选择 acme.sh DNS 插件 (不能只传 --dns, 必须指定具体插件)
+        local dns_plugin=""
+        if env | grep -qiE '^CF_Token|^CF_Key' ; then
+            dns_plugin="dns_cf"
+        elif env | grep -qiE '^Ali_Key' ; then
+            dns_plugin="dns_ali"
+        elif env | grep -qiE '^DP_Id|^DNSPOD_' ; then
+            dns_plugin="dns_dp"
+        elif env | grep -qiE '^GANDI_' ; then
+            dns_plugin="dns_gandi"
+        elif env | grep -qiE '^OCI_' ; then
+            dns_plugin="dns_oci"
+        fi
+        if [ -z "$dns_plugin" ]; then
+            _error "检测到 DNS API 变量但无法确定插件, 请手动设置 (如 CF 需 CF_Token+CF_Account_ID)"
             return 1
         fi
+        _info "使用 DNS 插件: ${dns_plugin}"
+        local acme_out
+        acme_out=$("$ACME_BIN" "${issue_args[@]}" --dns "$dns_plugin" 2>&1)
+        local rc=$?
+        # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
+        if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
+            _error "DNS 模式签发失败，请检查 CF_Token / CF_Account_ID 是否正确，且域名已正确解析到本机。"
+            _info "运行 'sb cert guide' 可查看 Cloudflare 详细设置步骤："
+            _cert_cf_guide
+            return 1
+        fi
+        echo "$acme_out" | tail -3
     else
+        _warn "未检测到 DNS API 变量 (CF_Token/CF_Account_ID 等), 将尝试 standalone 模式 (需 80 端口公网可达)。"
+        _warn "如需改用 DNS-01 (推荐, 无需开端口), 请先在 Cloudflare 设置并 export 变量后重跑; 步骤: sb cert guide"
         _info "使用 standalone 模式签发 (需 80 端口公网可达)..."
-        if ! "$ACME_BIN" "${issue_args[@]}" --standalone ; then
+        local acme_out
+        acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1)
+        local rc=$?
+        # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
+        if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
             _error "standalone 签发失败。常见原因: 80 端口被占用/未放行, 或域名未解析到本机。"
-            _error "解决: 放行 80 端口后重跑, 或改用 DNS 模式 (设置 CF_Token 等环境变量)。"
+            _info "推荐改用 DNS-01 模式 (无需开放端口, 仅需 Cloudflare 设置)。完整步骤："
+            _cert_cf_guide
             return 1
         fi
+        echo "$acme_out" | tail -3
     fi
 
     # 复制证书到统一目录
@@ -138,11 +168,88 @@ _cert_acme_issue() {
             echo "$domain" > "${SINGBOX_DIR}/.server_domain"
             _info "已将 ${domain} 设为默认 Trojan 域名 (写入 ${SINGBOX_DIR}/.server_domain)"
         fi
+        # 关键: 把真实证书覆盖到 sing-box 实际使用的 cert.pem/key.pem,
+        # 这样 AnyTLS/TUIC/Hy2/VLESS-WS 的 inbound (硬编码指向 ${SINGBOX_DIR}/cert.pem)
+        # 也一并切换到真证书, 无需逐个改 inbound。
+        if cp -f "${CERT_ACME_DIR}/${domain}/fullchain.pem" "${SINGBOX_DIR}/cert.pem" 2>/dev/null && \
+           cp -f "${CERT_ACME_DIR}/${domain}/privkey.pem" "${SINGBOX_DIR}/key.pem" 2>/dev/null; then
+            chmod 644 "${SINGBOX_DIR}/cert.pem"
+            chmod 600 "${SINGBOX_DIR}/key.pem"
+            _info "已用真实证书覆盖 ${SINGBOX_DIR}/cert.pem / key.pem (全部 TLS inbound 生效)"
+        else
+            _warn "覆盖 ${SINGBOX_DIR}/cert.pem 失败, 请手动复制 acme 证书"
+        fi
         return 0
     fi
 
     _error "证书签发成功但落地失败，请检查 ${CERT_ACME_DIR} 权限"
     return 1
+}
+
+# ============================================================
+# Cloudflare DNS-01 设置指引 (交互提示, 用户跑命令时可见)
+# ============================================================
+# 用法: _cert_cf_guide  —  打印在 Cloudflare 后台完成 DNS 记录 / API Token / Account ID
+#        三步设置的完整步骤, 让用户无需查文档也会配。
+_cert_cf_guide() {
+    cat <<'EOF'
+
+==================================================================
+ Cloudflare DNS-01 证书签发 · 设置指引（DNS-01 无需开放 80 端口）
+==================================================================
+
+【前置条件】
+  • 你有一个托管在 Cloudflare 的域名（如 example.com）
+  • 准备一个子域名指向本机 VPS，例如 hk.example.com → 你的 VPS IP
+
+------------------------------------------------------------------
+ 第 1 步：添加 DNS 解析（A 记录）
+------------------------------------------------------------------
+  Cloudflare 后台 → 你的域名 → DNS → Records → Add record
+    类型 Type       : A
+    名称 Name       : hk            （完整域名即 hk.example.com）
+    IPv4 地址       : 你的 VPS 公网 IP
+    代理状态 Proxy  : ⚠️ 必须选 [DNS only / 灰云 ☁️]，不要开 Proxied（橙云）
+    TTL             : Auto
+  ❗ 橙云会让客户端解析到 Cloudflare 边缘而非你的 VPS，sing-box TLS 握手会失败。
+
+------------------------------------------------------------------
+ 第 2 步：创建 API Token（仅供 acme.sh 自动加 _acme-challenge 记录）
+------------------------------------------------------------------
+  Cloudflare 后台 → 右上头像 → My Profile → API Tokens → Create Token
+    1) 使用模板 "Edit zone DNS"
+    2) Permissions   : Zone → DNS → Edit
+    3) Zone Resources: Include → Specific zone → 选你第 1 步的域名
+    4) Continue to summary → Create Token
+    5) 复制生成的 Token（只显示一次！）
+  🔒 这是「区域级」最小权限 token，比 Global API Key 安全，用完可随时删除。
+
+------------------------------------------------------------------
+ 第 3 步：获取 Account ID
+------------------------------------------------------------------
+  Cloudflare 后台 → 任意域名 → Overview（概览）页 → 右侧栏 "Account ID"
+  （你名下所有域名共用同一个 Account ID）
+
+------------------------------------------------------------------
+ 第 4 步：在 VPS 上导出变量并签发
+------------------------------------------------------------------
+  export CF_Token="粘贴第 2 步的 Token"
+  export CF_Account_ID="粘贴第 3 步的 Account ID"
+  sb cert issue hk.example.com
+
+  ✅ 签发成功后证书自动落到 sing-box，客户端关掉「跳过证书验证」即可。
+
+【安全提醒】
+  • CF_Token / CF_Account_ID 仅存在于你本次 shell 会话，不会被写进脚本或仓库。
+  • 每位使用者请用自己的 Cloudflare 账号，不要共用同一把 token。
+  • acme.sh 会在本机 ~/.acme.sh/ 保存 token 用于 90 天后自动续期（仅你本机）。
+
+【其他 DNS 服务商】
+  脚本同样支持：阿里云（Ali_Key）、腾讯 DNSPod（DP_Id）、Gandi、OCI（OCI_）
+  —— 改用对应环境变量即可，步骤类似。
+==================================================================
+
+EOF
 }
 
 # ============================================================
@@ -296,6 +403,9 @@ _cert_cli() {
                 _cert_rewrite_trojan_nodes "$domain"
             fi
             ;;
+        guide)
+            _cert_cf_guide
+            ;;
         renew)
             _cert_acme_renew "$arg1"
             ;;
@@ -317,6 +427,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo ""
     echo "命令:"
     echo "  issue <域名> [邮箱]   签发 Let's Encrypt 证书 (standalone/DNS 自动)"
+    echo "  guide                 查看 Cloudflare DNS-01 设置指引 (如何在 CF 建记录/Token)"
     echo "  renew [域名]          续期 (不指定域名则全部)"
     echo "  list                  列出已签发证书"
     echo "  status                状态"

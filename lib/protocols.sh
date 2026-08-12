@@ -92,8 +92,15 @@ _proto_vless_ws_uri() {
     local ws_path="${5:-/ws}" name="$6"
     local ep=$(_url_encode "$name")
     local penc=$(_url_encode "$ws_path")
-    # insecure=1 跳过自签证书验证 (与 AnyTLS/TUIC/Hy2 一致, 仅 sing-box 核心; 纯 Xray 核心请用 VLESS-Reality)
-    echo -n "vless://${uuid}@${server_ip}:${port}?type=ws&security=tls&sni=${sni}&fp=chrome&path=${penc}&insecure=1#${ep}"
+    # 进阶(真实证书): host/sni 用域名且去掉 insecure; 默认(自签): IP + insecure=1
+    local host="$server_ip" insecure=""
+    if _real_cert_ready; then
+        host="$SERVER_DOMAIN"
+        sni="$SERVER_DOMAIN"
+    else
+        insecure="&insecure=1"
+    fi
+    echo -n "vless://${uuid}@${host}:${port}?type=ws&security=tls&sni=${sni}&fp=chrome&path=${penc}${insecure}#${ep}"
 }
 
 # 从 reality 私钥推导公钥 (X25519)。
@@ -151,9 +158,14 @@ EOF
 _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
-    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
-    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
-    echo -n "anytls://${password}@${server_ip}:${port}?insecure=1#${ep}"
+    # 进阶(真实证书): host 改用域名且不再跳过验证; 默认(自签): IP + insecure=1
+    local host="$server_ip" qs=""
+    if _real_cert_ready; then
+        host="$SERVER_DOMAIN"
+    else
+        qs="?insecure=1"
+    fi
+    echo -n "anytls://${password}@${host}:${port}${qs}#${ep}"
 }
 
 # ============================================================
@@ -189,13 +201,14 @@ EOF
 _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    # TUIC v5 标准 URI 参数 (tuic-project spec):
-    #   allow_insecure=1 是 TUIC v5 规范定义的「跳过证书验证」参数
-    #   - v2rayN(sing_box 内核): 识别 tls.insecure, 加了就不用手动开「跳过证书验证」
-    #   - 小火箭/mihomo: 忽略该参数或等同 skip-cert-verify (不会破坏 version=5 解析,
-    #     因为 version=5 已显式写出)
-    # 加上后可省去用户在 v2rayN 里手动勾选 skip cert 的步骤; 自签证书场景必备
-    echo -n "tuic://${uuid}:${password}@${server_ip}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${ep}"
+    # 进阶(真实证书): host 用域名且去掉 allow_insecure; 默认(自签): IP + allow_insecure=1
+    local host="$server_ip" extra=""
+    if _real_cert_ready; then
+        host="$SERVER_DOMAIN"
+    else
+        extra="&allow_insecure=1"
+    fi
+    echo -n "tuic://${uuid}:${password}@${host}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3${extra}#${ep}"
 }
 
 # ============================================================
@@ -231,16 +244,16 @@ EOF
 _proto_hy2_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
 
-    # 如果有域名则用域名
-    local host="$server_ip"
-    if [ -n "${SERVER_DOMAIN:-}" ]; then
+    # 进阶(真实证书): host 用域名且去掉 insecure; 默认(自签): IP + insecure=1
+    local host="$server_ip" insecure=""
+    if _real_cert_ready; then
         host="$SERVER_DOMAIN"
+    else
+        insecure="?insecure=1"
     fi
 
     local ep=$(_url_encode "$name")
-    # sing-box 内核的 tls.insecure 字段合法, 不受 8/1 Xray allowInsecure 禁令影响;
-    # 纯 Xray 客户端请改用 VLESS-Reality / VMess(证书哈希 pin)
-    echo -n "hysteria2://${password}@${host}:${port}/?insecure=1#${ep}"
+    echo -n "hysteria2://${password}@${host}:${port}/${insecure}#${ep}"
 }
 
 # ============================================================
@@ -280,9 +293,12 @@ _proto_trojan_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local sni="${5:-$server_ip}"
     local insecure="${6:-1}"
+    # 进阶(真实证书): 自动关 insecure 且 sni 用域名; 默认(自签): IP + insecure=1
+    if _real_cert_ready; then
+        insecure="0"
+        [ -n "${SERVER_DOMAIN:-}" ] && sni="$SERVER_DOMAIN"
+    fi
     local ep=$(_url_encode "$name")
-    # Trojan 强制 TLS; 自签证书场景 insecure=1 (sing-box 内核合法, 不受 Xray 8/1 禁令影响)
-    # 真证书(ACME)场景传 insecure=0 即可, 保留该字段不破坏解析
     echo -n "trojan://${password}@${server_ip}:${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
 }
 
@@ -608,6 +624,18 @@ _sb_print_vmess_links_after_renew() {
 #   这是 sing-box 内核(tls.insecure 字段)的合法行为, 不受 Xray 8/1 禁令影响。
 #   主力客户端 v2rayN 选 sing_box 模式即走 sing-box 内核, 可安心使用。
 #   纯 Xray 客户端请用 VLESS-Reality(免验证) / VMess(证书哈希 pin), 不依赖 insecure。
+
+# 真实证书就绪判定: 设了 SERVER_DOMAIN(或持久化 .server_domain) 且 acme 证书已落地
+# 供各协议 URI 生成函数判断是否切换到「域名 host + 去掉 insecure」的进阶模式
+_real_cert_ready() {
+    local domain="${SERVER_DOMAIN:-}"
+    [ -z "$domain" ] && [ -f "${SINGBOX_DIR}/.server_domain" ] && \
+        domain="$(cat "${SINGBOX_DIR}/.server_domain" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$domain" ] || return 1
+    local acme_dir="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
+    [ -f "${acme_dir}/${domain}/fullchain.pem" ] && return 0
+    return 1
+}
 
 _cert_public_key_sha256() {
     # sing-box 1.13.0+ 证书固定用: 「证书公钥(SPKI)的 SHA-256」base64 编码
