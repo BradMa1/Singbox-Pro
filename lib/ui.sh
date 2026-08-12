@@ -139,14 +139,14 @@ _ui_main_menu() {
         echo -e "  ${CYAN}【进阶功能】${NC}"
         echo -e "    ${GREEN}[9]${NC} 中转管理          ${GREEN}[10]${NC} WARP 管理"
         echo -e "    ${GREEN}[11]${NC} IPv6 优化        ${GREEN}[12]${NC} 流媒体 DNS"
+        echo -e "    ${GREEN}[13]${NC} 证书管理(ACME 真实证书)"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
         # 左列目标显示宽度=34 (含 [N] 标签 4 宽 + 标签后 1 空格 + 菜单名 + 提示括号)
         local M=34
-        echo -e "    ${GREEN}[13]${NC} $(_str_pad_cjk "安装/更新核心(sing-box 内核)" $M)${RED}[14]${NC} 卸载脚本(清理所有配置)"
-        echo -e "    ${GREEN}[15]${NC} $(_str_pad_cjk "健康检查(端口/配置/服务诊断)" $M)${GREEN}[16]${NC} 升级脚本(lib 模块+sb.sh)"
-        echo -e "    ${GREEN}[17]${NC} 证书管理(ACME 真实证书)"
+        echo -e "    ${GREEN}[14]${NC} $(_str_pad_cjk "安装/更新核心(sing-box 内核)" $M)${RED}[15]${NC} 卸载脚本(清理所有配置)"
+        echo -e "    ${GREEN}[16]${NC} $(_str_pad_cjk "健康检查(端口/配置/服务诊断)" $M)${GREEN}[17]${NC} 升级脚本(lib 模块+sb.sh)"
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
@@ -168,11 +168,11 @@ _ui_main_menu() {
             10) _ui_warp_menu ;;
             11) _ui_ipv6_menu ;;
             12) _ui_streaming_dns_menu ;;
-            13) _ui_update_core ;;
-            14) _ui_uninstall ;;
-            15) _ui_health_check ;;
-            16) _ui_upgrade_scripts ;;
-            17) _ui_cert_menu ;;
+            13) _ui_cert_menu ;;
+            14) _ui_update_core ;;
+            15) _ui_uninstall ;;
+            16) _ui_health_check ;;
+            17) _ui_upgrade_scripts ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -187,12 +187,13 @@ _ui_cert_menu() {
     while true; do
         clear
         echo -e "${CYAN}=== 证书管理 ===${NC}"
+        echo -e "${YELLOW}  提示: 证书由 acme.sh 定时任务自动续期，[5] 仅用于手动强制续期${NC}"
         echo ""
         echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
         echo -e "    ${GREEN}[2]${NC} Cloudflare DNS-01 设置指引"
         echo -e "    ${GREEN}[3]${NC} 列出已签发证书"
         echo -e "    ${GREEN}[4]${NC} 查看证书状态"
-        echo -e "    ${GREEN}[5]${NC} 续期证书"
+        echo -e "    ${GREEN}[5]${NC} 续期证书 (自动续期失败时手动用)"
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
         read -r -p "  请输入选项 [0-5]: " cert_choice
