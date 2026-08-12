@@ -22,6 +22,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ```
 
 > 上面命令优先用 `curl`，若系统没有 `curl` 会自动回退到 `wget`（仅装了 wget 的精简系统也能一键安装）。
+
+安装器会自动装好 `git` 并 **从 GitHub 克隆完整仓库** 到 `/usr/local/share/singbox-pro`，因此部署后该目录就是正式 git 仓库。后续更新直接：
+
+```bash
+cd /usr/local/share/singbox-pro && git pull
+```
+
+> 仅当 VPS 实在装不上 git（如完全离线）时，安装器才回退为逐文件 curl 下载，此时更新请用 `sb upgrade` 而非 `git pull`。
+
 如遇Alpine系统无法安装，可先执行以下命令：
 ```
 # 更新仓库索引

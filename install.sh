@@ -37,6 +37,9 @@ SHORTCUT="/usr/local/bin/sb"
 
 # --- GitHub 仓库 ---
 REPO_RAW="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
+# git 克隆源 (github → VPS, 支持 git pull 更新)；镜像源走 ghproxy 兜底
+REPO_GIT="https://github.com/BradMa1/Singbox-Pro.git"
+REPO_GIT_MIRROR="${GH_MIRROR:-https://ghproxy.net/}https://github.com/BradMa1/Singbox-Pro.git"
 
 # --- 检测 ---
 _check_root() {
@@ -180,27 +183,27 @@ _step_deps() {
             if ! apt-get update -qq 2>&1 | tail -8; then
                 _warn "apt-get update 失败（容器可能无有效软件源或离线），将尝试直接安装已有索引的包"
             fi
-            _info "安装依赖: curl wget openssl jq tar gzip net-tools iproute2 dnsutils"
+            _info "安装依赖: curl wget git openssl jq tar gzip net-tools iproute2 dnsutils"
             # 安装失败不再静默中止（此前因 set -e + 输出被吞导致卡死无提示）
-            if ! apt-get install -y curl wget openssl jq tar gzip net-tools iproute2 dnsutils 2>&1 | tail -20; then
+            if ! apt-get install -y curl wget git openssl jq tar gzip net-tools iproute2 dnsutils 2>&1 | tail -20; then
                 _warn "部分依赖安装失败，详见上方 apt 报错；将继续进行依赖检查"
             fi
             ;;
         alpine)
             _info "更新 apk 软件源 (apk update)..."
             apk update 2>&1 | tail -8 || _warn "apk update 失败"
-            _info "安装依赖: curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools"
-            if ! apk add --no-cache curl wget openssl jq tar gzip net-tools iproute2 bash bind-tools 2>&1 | tail -20; then
+            _info "安装依赖: curl wget git openssl jq tar gzip net-tools iproute2 bash bind-tools"
+            if ! apk add --no-cache curl wget git openssl jq tar gzip net-tools iproute2 bash bind-tools 2>&1 | tail -20; then
                 _warn "部分依赖安装失败，将继续进行依赖检查"
             fi
             ;;
         centos|rhel|fedora|rocky|almalinux)
             if command -v dnf &>/dev/null; then
-                _info "安装依赖 (dnf): curl wget openssl jq tar gzip net-tools iproute bind-utils"
-                dnf install -y curl wget openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "dnf 安装失败"
+                _info "安装依赖 (dnf): curl wget git openssl jq tar gzip net-tools iproute bind-utils"
+                dnf install -y curl wget git openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "dnf 安装失败"
             else
-                _info "安装依赖 (yum): curl wget openssl jq tar gzip net-tools iproute bind-utils"
-                yum install -y curl wget openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "yum 安装失败"
+                _info "安装依赖 (yum): curl wget git openssl jq tar gzip net-tools iproute bind-utils"
+                yum install -y curl wget git openssl jq tar gzip net-tools iproute bind-utils 2>&1 | tail -20 || _warn "yum 安装失败"
             fi
             ;;
         *)
@@ -221,6 +224,11 @@ _step_deps() {
     #    包管理器装不上则从 GitHub 下载静态二进制兜底，仍失败才警告（不影响非 TLS 协议）
     if ! command -v openssl &>/dev/null; then
         _ensure_openssl || _warn "openssl 未能安装（TLS 协议生成证书时会失败；可稍后用 'apt-get install openssl' 或手动补装）"
+    fi
+    # 4) git：用于 git clone 部署 (github → VPS, 支持 git pull 更新)。
+    #    缺失时不致命——install.sh 会回退 curl 逐文件下载 (更新改用 sb upgrade)。
+    if ! command -v git &>/dev/null; then
+        _warn "git 未安装，将回退 curl 下载部署 (无法使用 git pull 更新；更新请用 'sb upgrade')"
     fi
 
     _ok "系统依赖就绪"
@@ -269,12 +277,65 @@ _step_singbox() {
     _ok "sing-box v${version} 安装完成"
 }
 
+# 通过 git clone 部署项目 (github → VPS)，使 VPS 成为正式 git 仓库，支持 git pull 更新
+# 主源失败时自动回退 ghproxy 镜像；返回 0 表示成功（供 _step_scripts 判断是否回退）
+_clone_repo() {
+    local log="/tmp/sb_gitclone.log"
+    # 1) 已存在且是 git 仓库 → 直接拉取更新
+    if [ -d "${INSTALL_DIR}/.git" ]; then
+        _info "检测到现有 git 仓库，执行 git pull 更新..."
+        if git -C "${INSTALL_DIR}" pull --ff-only >>"$log" 2>&1; then
+            return 0
+        fi
+        _warn "git pull 失败: $(tail -2 "$log" | tr '\n' ' ')"
+    fi
+    # 2) 已存在但非 git 仓库（如旧版 curl 部署）→ 备份后重新克隆
+    if [ -d "${INSTALL_DIR}" ]; then
+        local bak="${INSTALL_DIR}.bak.$(date +%s)"
+        _warn "现有目录非 git 仓库，备份为 ${bak} 后重新克隆"
+        mv "${INSTALL_DIR}" "${bak}" || return 1
+    fi
+    # 3) 全新克隆（github 主源）
+    _info "正在通过 git clone 从 GitHub 部署项目..."
+    if git clone "${REPO_GIT}" "${INSTALL_DIR}" >>"$log" 2>&1; then
+        return 0
+    fi
+    _warn "git clone 主源失败: $(tail -2 "$log" | tr '\n' ' ')"
+    # 4) ghproxy 镜像兜底
+    _info "尝试 ghproxy 镜像源..."
+    if git clone "${REPO_GIT_MIRROR}" "${INSTALL_DIR}" >>"$log" 2>&1; then
+        return 0
+    fi
+    _warn "git clone 镜像也失败: $(tail -2 "$log" | tr '\n' ' ')"
+    return 1
+}
+
 # ============================================================
-# 第三步: 下载管理脚本和模块
+# 第三步: 部署管理脚本和模块
 # ============================================================
 _step_scripts() {
-    _info "正在下载管理脚本和模块..."
+    _info "正在部署管理脚本和模块..."
 
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+
+    # 优先 git clone (github → VPS)：部署后 VPS 即正式 git 仓库，可 git pull 更新
+    if command -v git >/dev/null 2>&1 && _clone_repo; then
+        _ok "项目已通过 git 部署: ${INSTALL_DIR}"
+        _info "后续更新: cd ${INSTALL_DIR} && git pull"
+        if [ -f "$SB_SCRIPT" ]; then
+            chmod +x "$SB_SCRIPT"
+            ln -sf "$SB_SCRIPT" "$SHORTCUT"
+            chmod +x "$SHORTCUT" 2>/dev/null || true
+            _ok "快捷命令 sb 已就绪"
+        else
+            _err "git 部署完成但未找到 sb.sh，部署异常"
+        fi
+        return 0
+    fi
+
+    # 回退：git 不可用或 clone 失败 → curl 逐文件下载
+    # (此模式下 VPS 非 git 仓库，更新请用 'sb upgrade' 而非 git pull)
+    _warn "回退为 curl 逐文件下载 (更新需用 'sb upgrade'，无法 git pull)"
     mkdir -p "$LIB_DIR"
 
     # 下载入口脚本
