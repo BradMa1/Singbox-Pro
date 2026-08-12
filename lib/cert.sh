@@ -39,10 +39,16 @@ _cert_acme_install() {
         return 0
     fi
 
+    # 前置依赖: acme.sh 安装需要 curl/wget 之一
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+        _error "未找到 curl 或 wget, 无法安装 acme.sh。请先: apt-get install -y curl"
+        return 1
+    fi
+
     _info "正在安装 acme.sh (社区标准 Let's Encrypt 客户端)..."
     local ok=0 log="/tmp/acme_install.log" tmp
 
-    # 1) 官方一键脚本
+    # 1) 官方一键脚本 (get.acme.sh 内部自带回 github 下载)
     if curl -fsSL https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
         chmod +x /tmp/acme_install.sh
         if /tmp/acme_install.sh >"$log" 2>&1; then
@@ -55,32 +61,48 @@ _cert_acme_install() {
         _warn "下载官方安装脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
     fi
 
-    # 2) git clone 官方仓库
+    # 2) get.acme.sh 经 ghproxy 镜像 (github 直连失败时)
     if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
+        _warn "回退: get.acme.sh 经 ghproxy 镜像..."
+        if curl -fsSL https://ghproxy.com/https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
+            chmod +x /tmp/acme_install.sh
+            if /tmp/acme_install.sh >"$log" 2>&1; then
+                ok=1
+            else
+                _warn "ghproxy 脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
+            fi
+            rm -f /tmp/acme_install.sh
+        else
+            _warn "ghproxy 下载失败: $(tail -2 "$log" | tr '\n' ' ')"
+        fi
+    fi
+
+    # 3) git clone 官方仓库 (需 git, 通常已从 github 部署本仓库时具备)
+    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ] && command -v git >/dev/null 2>&1; then
         _warn "回退: git clone 官方仓库..."
         tmp=$(mktemp -d)
         if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
-            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1
+            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1 || _warn "git clone 官方失败: $(tail -2 "$log" | tr '\n' ' ')"
         else
             _warn "git clone 官方失败: $(tail -2 "$log" | tr '\n' ' ')"
         fi
         rm -rf "$tmp"
     fi
 
-    # 3) 镜像回退 (ghproxy.com)，仍不通时最后一搏
-    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
-        _warn "回退: ghproxy 镜像..."
+    # 4) git clone 经 ghproxy 镜像 (最后兜底)
+    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ] && command -v git >/dev/null 2>&1; then
+        _warn "回退: git clone 经 ghproxy 镜像..."
         tmp=$(mktemp -d)
         if git clone --depth 1 https://ghproxy.com/https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
-            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1
+            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1 || _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"
         else
-            _warn "ghproxy 失败: $(tail -2 "$log" | tr '\n' ' ')"
+            _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"
         fi
         rm -rf "$tmp"
     fi
 
     if [ -x "$ACME_BIN" ]; then
-        _success "acme.sh 安装完成: $ACME_BIN"
+        _success "acme.sh 安装完成: $($ACME_BIN --version 2>/dev/null | head -1)"
         return 0
     fi
 
