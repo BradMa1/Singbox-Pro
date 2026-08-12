@@ -27,6 +27,8 @@ ACME_BIN="${ACME_BIN:-$HOME/.acme.sh/acme.sh}"
 ACME_HOME="${ACME_HOME:-$HOME/.acme.sh}"
 CERT_META_FILE="${CERT_META_FILE:-${SINGBOX_DIR}/cert_metadata.json}"
 CERT_ACME_DIR="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
+# 你的 Cloudflare Account ID (非机密, CF 后台可见)。任何人可用环境变量覆盖, 避免硬编码进他仓库。
+CERT_CF_ACCOUNT_ID_DEFAULT="${CERT_CF_ACCOUNT_ID_DEFAULT:-72031701f741ca2f0d287c2d6fdf750a}"
 
 # ============================================================
 # acme.sh 安装
@@ -95,6 +97,23 @@ _cert_acme_issue() {
     local dns_mode=""
     if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
         dns_mode="detected"
+    fi
+
+    # 未检测到 DNS 凭证且处于交互终端时, 主动询问 Cloudflare 凭证
+    # —— 免得用户在 US 等新机器上不知道要先 export (这正是此前"没提示"的根因)
+    if [ -z "$dns_mode" ] && [ -t 1 ]; then
+        _warn "未检测到 DNS API 凭证 (CF_Token / CF_Account_ID 等)。"
+        _info "推荐用 Cloudflare DNS-01 模式签发 (无需开放 80 端口)。现在输入 Cloudflare 凭证? [y/N]"
+        read -r -t 30 _ans 2>/dev/null
+        if [[ "$_ans" =~ ^[Yy]$ ]]; then
+            read -r -p "Cloudflare API Token: " CF_Token
+            read -r -p "Cloudflare Account ID [${CERT_CF_ACCOUNT_ID_DEFAULT}]: " CF_Account_ID
+            CF_Account_ID="${CF_Account_ID:-${CERT_CF_ACCOUNT_ID_DEFAULT}}"
+            export CF_Token CF_Account_ID
+            if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
+                dns_mode="detected"
+            fi
+        fi
     fi
 
     if [ -n "$dns_mode" ]; then
@@ -191,7 +210,7 @@ _cert_acme_issue() {
 # 用法: _cert_cf_guide  —  打印在 Cloudflare 后台完成 DNS 记录 / API Token / Account ID
 #        三步设置的完整步骤, 让用户无需查文档也会配。
 _cert_cf_guide() {
-    cat <<'EOF'
+    cat <<EOF
 
 ==================================================================
  Cloudflare DNS-01 证书签发 · 设置指引（DNS-01 无需开放 80 端口）
@@ -233,7 +252,7 @@ _cert_cf_guide() {
  第 4 步：在 VPS 上导出变量并签发
 ------------------------------------------------------------------
   export CF_Token="粘贴第 2 步的 Token"
-  export CF_Account_ID="粘贴第 3 步的 Account ID"
+  export CF_Account_ID="${CERT_CF_ACCOUNT_ID_DEFAULT}"
   sb cert issue hk.example.com
 
   ✅ 签发成功后证书自动落到 sing-box，客户端关掉「跳过证书验证」即可。
