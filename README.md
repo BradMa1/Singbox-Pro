@@ -87,23 +87,40 @@ bash --version
 | `sb log` | 查看实时日志 |
 | `sb upgrade` | 升级管理脚本到最新版 |
 | `sb backup` | 备份当前配置 |
-| `sb cert issue <域名> [邮箱]` | 用 acme.sh 签发 Let's Encrypt 真实证书（standalone / DNS 自动识别），供 Trojan 真证书使用 |
+| `sb cert issue <域名> [邮箱]` | 用 acme.sh 签发 Let's Encrypt 真实证书（standalone / DNS 自动识别），为 AnyTLS/TUIC/Hysteria2/VLESS-WS/Trojan 切换真实证书 |
+| `sb cert guide` | 查看 Cloudflare DNS-01 设置指引（A 记录 / API Token / Account ID 三步） |
 | `sb cert renew [域名]` | 续期证书（不指定域名则全部） |
 | `sb cert list` / `status` | 列出 / 查看已签发证书 |
 | `sb help` | 显示帮助信息 |
 
-#### 证书 → Trojan 真证书自动接通机制
+#### 证书 → 真实证书自动切换机制
 
-`sb cert issue <域名>` 成功后，会把该域名持久化到 `${SINGBOX_DIR}/.server_domain`。
-此后在「添加节点」菜单选 **[5] Trojan** 时，脚本自动读取该域名对应的 acme 真证书
-（`${SINGBOX_DIR}/acme/<域名>/`），生成的 Trojan 链接为 `allowInsecure=0`（真证书，无需客户端跳过验证）。
+`sb cert issue <域名>` 成功后，会把该域名持久化到 `${SINGBOX_DIR}/.server_domain`，
+并把 acme 签发的真实证书覆盖到 `${SINGBOX_DIR}/cert.pem` / `key.pem`。
+此后 `sb links` 生成的以下协议节点会自动用 **域名做 host/sni**，并去掉 `insecure=1` / `allow_insecure=1`：
+**AnyTLS / TUIC / Hysteria2 / VLESS-WS / Trojan**。
+
+VLESS-Reality 不依赖这张证书（它走 reality 握手），保持原样。
 
 > **前置条件（签发前必须完成）**：
 > 1. 域名已把 **A 记录解析到本机公网 IP**（如 `69.42.222.160`）；
-> 2. 放行 **80 端口**（Let's Encrypt 的 standalone 验证会访问 `http://域名/.well-known/acme-challenge/`）。
+> 2. A 记录必须设为 **DNS only（灰云）**，不要开 Proxied（橙云），否则客户端会解析到 Cloudflare 边缘而非本机；
+> 3. 放行 **80 端口**（Let's Encrypt 的 standalone 验证会访问 `http://域名/.well-known/acme-challenge/`）。
 >    - 80 端口被占用 / 不便开放时，改用 **DNS 验证模式**：先 `export CF_Token=xxx CF_Account_ID=yyy`（Cloudflare 示例），再 `sb cert issue <域名>`，无需开放 80。
+>    - 运行 `sb cert guide` 可查看 Cloudflare 的完整设置步骤（A 记录 / API Token / Account ID）。
 >
-> **域名解析尚未生效 / 80 不通** 会导致签发失败并提示，此时 Trojan 仍走自签证书（`allowInsecure=1`，功能正常但 stealth 降级）。
+> **域名解析尚未生效 / 80 不通 / DNS 变量错误** 会导致签发失败并提示，此时所有 TLS 协议仍走自签证书（`insecure=1`，功能正常但客户端会弹安全警告）。
+
+#### 多 VPS 部署规则
+
+每台独立 VPS 需要 **一个独立子域名** 和一次独立签发：
+- 例如 HK 机用 `hk.brad.dpdns.org` → `sb cert issue hk.brad.dpdns.org`
+- 新增 JP 机则加 `jp.brad.dpdns.org` 指向 JP IP → `sb cert issue jp.brad.dpdns.org`
+
+**不能复用**另一台机的子域名：证书与 IP 都是域名绑定的，复用会导致客户端解析错 / 证书名不匹配。
+
+Cloudflare 凭证通过环境变量 `export CF_Token=xxx CF_Account_ID=yyy` 注入，**脚本/仓库不保存任何 token**；
+多人使用时各人应使用自己的 Cloudflare zone 与 token。
 
 ### sb health 输出示例
 
