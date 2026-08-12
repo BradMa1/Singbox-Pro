@@ -70,14 +70,25 @@ _ui_banner() {
     local l1="Singbox-Pro   v${real_version}"
     local l2="Multi-Protocol Proxy"
 
+    # 显示运行实例对应的 git commit 短哈希, 便于排查「git pull 了但 sb 还是旧代码」的问题
+    # (sb 软链常指向旧目录拷贝, 导致 pull 不生效; 有哈希即可一眼对比)
+    local commit_hash=""
+    if command -v git >/dev/null 2>&1 && [ -d "$_lib_dir/../.git" ]; then
+        commit_hash=$(git -C "$_lib_dir/.." rev-parse --short HEAD 2>/dev/null)
+    fi
+    local l3=""
+    [ -n "$commit_hash" ] && l3="build ${commit_hash}"
+
     # 动态计算居中 padding
     local p1=$(( (w - ${#l1}) / 2 ))
     local p2=$(( (w - ${#l2}) / 2 ))
+    local p3=$(( (w - ${#l3}) / 2 ))
 
     echo -e "${CYAN}"
     printf "  ╔%s╗\n" "$(printf '═%.0s' $(seq 1 $w))"
     printf "  ║%*s%s%*s║\n" $p1 "" "$l1" $((w - p1 - ${#l1})) ""
     printf "  ║%*s%s%*s║\n" $p2 "" "$l2" $((w - p2 - ${#l2})) ""
+    [ -n "$l3" ] && printf "  ║%*s${YELLOW}%s${CYAN}%*s║\n" $p3 "" "$l3" $((w - p3 - ${#l3})) ""
     printf "  ╚%s╝\n" "$(printf '═%.0s' $(seq 1 $w))"
     echo -e "${NC}"
     echo ""
