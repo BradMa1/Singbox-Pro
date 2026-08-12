@@ -40,22 +40,43 @@ _cert_acme_install() {
     fi
 
     _info "正在安装 acme.sh (社区标准 Let's Encrypt 客户端)..."
-    # 优先官方一键脚本
-    if curl -sL https://get.acme.sh -o /tmp/acme_install.sh 2>/dev/null; then
+    local ok=0 log="/tmp/acme_install.log" tmp
+
+    # 1) 官方一键脚本
+    if curl -fsSL https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
         chmod +x /tmp/acme_install.sh
-        if /tmp/acme_install.sh 2>&1 | tail -3; then
-            rm -f /tmp/acme_install.sh
+        if /tmp/acme_install.sh >"$log" 2>&1; then
+            ok=1
+        else
+            _warn "官方脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
         fi
+        rm -f /tmp/acme_install.sh
+    else
+        _warn "下载官方安装脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
     fi
 
-    if [ ! -x "$ACME_BIN" ]; then
-        # 回退: git clone 安装
-        _warn "一键脚本失败，尝试 git clone 方式..."
-        local tmp=$(mktemp -d)
-        if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" 2>/dev/null; then
-            (cd "$tmp/acme.sh" && ./acme.sh --install 2>&1 | tail -3)
-            rm -rf "$tmp"
+    # 2) git clone 官方仓库
+    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
+        _warn "回退: git clone 官方仓库..."
+        tmp=$(mktemp -d)
+        if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
+            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1
+        else
+            _warn "git clone 官方失败: $(tail -2 "$log" | tr '\n' ' ')"
         fi
+        rm -rf "$tmp"
+    fi
+
+    # 3) 镜像回退 (ghproxy.com)，仍不通时最后一搏
+    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
+        _warn "回退: ghproxy 镜像..."
+        tmp=$(mktemp -d)
+        if git clone --depth 1 https://ghproxy.com/https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
+            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1
+        else
+            _warn "ghproxy 失败: $(tail -2 "$log" | tr '\n' ' ')"
+        fi
+        rm -rf "$tmp"
     fi
 
     if [ -x "$ACME_BIN" ]; then
