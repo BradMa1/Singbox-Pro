@@ -106,9 +106,23 @@ _cert_acme_issue() {
         _info "推荐用 Cloudflare DNS-01 模式签发 (无需开放 80 端口)。现在输入 Cloudflare 凭证? [y/N]"
         read -r -t 30 _ans 2>/dev/null
         if [[ "$_ans" =~ ^[Yy]$ ]]; then
-            read -r -p "Cloudflare API Token: " CF_Token
+            local CF_Token="" CF_Account_ID=""
+            _info "需要输入两个不同字段："
+            _info "  1) API Token: 从 Cloudflare 后台 'My Profile → API Tokens' 创建，格式如 cfut_...（长串、以 cfut_ 开头）"
+            _info "  2) Account ID: 你的 CF 账户 ID，已预填在方括号内，直接回车即可"
+            while [ -z "$CF_Token" ]; do
+                read -r -p "Cloudflare API Token: " CF_Token
+                CF_Token="$(echo "$CF_Token" | tr -d '[:space:]')"
+                if [ -z "$CF_Token" ]; then
+                    _warn "API Token 不能为空，请重新输入"
+                elif [ "$CF_Token" = "$CERT_CF_ACCOUNT_ID_DEFAULT" ]; then
+                    _warn "你输入的是 Account ID，不是 API Token！请重新输入以 cfut_ 开头的 Token"
+                    CF_Token=""
+                fi
+            done
             read -r -p "Cloudflare Account ID [${CERT_CF_ACCOUNT_ID_DEFAULT}]: " CF_Account_ID
             CF_Account_ID="${CF_Account_ID:-${CERT_CF_ACCOUNT_ID_DEFAULT}}"
+            CF_Account_ID="$(echo "$CF_Account_ID" | tr -d '[:space:]')"
             export CF_Token CF_Account_ID
             if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
                 dns_mode="detected"
