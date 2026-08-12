@@ -187,7 +187,7 @@ _ui_cert_menu() {
     while true; do
         clear
         echo -e "${CYAN}=== 证书管理 ===${NC}"
-        echo -e "${YELLOW}  提示: 证书由 acme.sh 定时任务自动续期，[5] 仅用于手动强制续期${NC}"
+        echo -e "${YELLOW}  提示: 证书由 acme.sh 定时任务自动续期，[4] 仅用于手动强制续期${NC}"
         echo ""
         echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
         echo -e "    ${GREEN}[2]${NC} 列出已签发证书"
