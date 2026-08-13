@@ -174,16 +174,13 @@ _cert_acme_issue() {
     fi
 
     # 未检测到 DNS 凭证且处于交互终端时, 主动询问 Cloudflare 凭证
-    # —— 免得用户在 US 等新机器上不知道要先 export (这正是此前"没提示"的根因)
     if [ -z "$dns_mode" ] && [ -t 1 ]; then
-        _warn "未检测到 DNS API 凭证 (CF_Token / CF_Account_ID 等)。"
-        _info "推荐用 Cloudflare DNS-01 模式签发 (无需开放 80 端口)。现在输入 Cloudflare 凭证? [y/N]"
+        _warn "未检测到 DNS API 凭证。"
+        _info "DNS-01 模式无需开放 80 端口，是否输入 Cloudflare 凭证? [y/N]"
         read -r -t 30 _ans 2>/dev/null
         if [[ "$_ans" =~ ^[Yy]$ ]]; then
             local CF_Token="" CF_Account_ID=""
-            _info "需要输入两个不同字段："
-            _info "  1) API Token: 从 Cloudflare 后台 'My Profile → API Tokens' 创建，格式如 cfut_...（长串、以 cfut_ 开头）"
-            _info "  2) Account ID: 你的 CF 账户 ID，在 CF 后台任意域名 Overview 页右侧可复制"
+            _info "Token 以 cfut_ 开头；Account ID 为 32 位十六进制。"
             while [ -z "$CF_Token" ]; do
                 read -r -p "Cloudflare API Token: " CF_Token
                 CF_Token="$(echo "$CF_Token" | tr -d '[:space:]')"
@@ -236,25 +233,21 @@ _cert_acme_issue() {
         local rc=$?
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
         if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
-            _error "DNS 模式签发失败，acme.sh 原始错误如下（请重点看最后几行的 'invalid'/'permission'/'not found' 等关键字）："
+            _error "DNS 模式签发失败，请重点看 acme.sh 错误关键字：invalid / permission / not found"
             echo "$acme_out" | tail -15
-            _info "常见原因: ① API Token 没给 DNS 编辑权限 ② Token 选错 Zone ③ 域名未解析到本机 ④ 子域名和 Zone 不匹配。"
-            _info "运行 'sb cert guide' 可查看 Cloudflare 详细设置步骤。"
-            _cert_cf_guide
+            _info "常见原因：Token 无 DNS 编辑权限 / 域名未解析 / 子域名与 Zone 不匹配。详见：sb cert guide"
             return 1
         fi
         echo "$acme_out" | tail -3
     else
-        _warn "未检测到 DNS API 变量 (CF_Token/CF_Account_ID 等)。"
-        _info "推荐改用 DNS-01 模式 (无需开放 80 端口), 设置步骤如下, 设置并 export 变量后重跑本命令即可:"
-        _cert_cf_guide
-        _info "若本机 80 端口公网可达, 也可直接尝试 standalone 模式..."
+        _warn "未检测到 DNS API 变量。"
+        _info "建议：export CF_Token/CF_Account_ID 后用 DNS-01（无需 80 端口），或尝试 standalone（需 80 可达）。"
         local acme_out
         acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1)
         local rc=$?
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
         if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
-            _error "standalone 签发失败 (80 端口不可达或域名未解析到本机)。请按上方指引配置 DNS-01 后重跑。"
+            _error "standalone 签发失败：80 端口不可达或域名未解析。建议改用 DNS-01，详见：sb cert guide"
             return 1
         fi
         echo "$acme_out" | tail -3

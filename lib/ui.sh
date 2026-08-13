@@ -193,12 +193,20 @@ _ui_cert_menu() {
     while true; do
         clear
         echo -e "${CYAN}=== 证书管理 ===${NC}"
-        echo -e "${YELLOW}  提示: 证书由 acme.sh 定时任务自动续期，[3] 仅用于手动强制续期${NC}"
+        echo ""
+        echo -e "  真实证书用于 TLS 系协议 (AnyTLS/TUIC/Hy2/Trojan/VLESS-WS 等)"
+        echo -e "  由 acme.sh 自动续期，[3] 仅用于自动续期失败时手动强制续期"
         echo ""
         echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
         echo -e "    ${GREEN}[2]${NC} 查看证书状态与列表"
         echo -e "    ${GREEN}[3]${NC} 续期证书 (自动续期失败时手动用)"
         echo -e "    ${YELLOW}[0]${NC} 返回"
+        echo ""
+        echo -e "  ${YELLOW}[Cloudflare DNS-01 准备步骤]${NC}"
+        echo -e "  ① CF 后台 → 域名 DNS → 添加 A 记录 (灰云 ☁️) 指向本机 IP"
+        echo -e "  ② 头像 → My Profile → API Tokens → Create Token → Edit zone DNS"
+        echo -e "  ③ 任意域名 Overview 页右侧复制 Account ID"
+        echo -e "  ④ 选择 [1] 后按提示输入 Token 与 Account ID 即可签发"
         echo ""
         read -r -p "  请输入选项 [0-3]: " cert_choice
         cert_choice=$(echo "$cert_choice" | xargs 2>/dev/null)
