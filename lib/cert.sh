@@ -110,6 +110,32 @@ _cert_acme_install() {
     return 1
 }
 
+# 把已签发的 acme 证书同步到 sing-box 实际使用的 cert.pem/key.pem,
+# 让 AnyTLS/TUIC/Hy2/VLESS-WS 等所有硬编码引用 ${SINGBOX_DIR}/cert.pem 的 inbound 生效。
+# (注: argo-vless-ws 是回环明文 ws, listen 127.0.0.1 且无 tls 段, 不引用 cert.pem, 不受影响)
+# 返回 0 表示同步成功
+_cert_sync_cert() {
+    local domain="$1"
+    [ -n "$domain" ] || return 1
+    [ -f "${CERT_ACME_DIR}/${domain}/fullchain.pem" ] || return 1
+    if cp -f "${CERT_ACME_DIR}/${domain}/fullchain.pem" "${SINGBOX_DIR}/cert.pem" 2>/dev/null && \
+       cp -f "${CERT_ACME_DIR}/${domain}/privkey.pem" "${SINGBOX_DIR}/key.pem" 2>/dev/null; then
+        chmod 644 "${SINGBOX_DIR}/cert.pem"
+        chmod 600 "${SINGBOX_DIR}/key.pem"
+        return 0
+    fi
+    return 1
+}
+
+# 让 sing-box 加载新证书 (幂等: 可用 sb 的校验重启, 否则直接 systemctl restart)
+_cert_reload_singbox() {
+    if declare -f _sb_restart_and_verify >/dev/null 2>&1; then
+        _sb_restart_and_verify 2>/dev/null || _warn "重启 sing-box 失败, 请手动执行: sb restart"
+    else
+        systemctl restart sing-box 2>/dev/null || _warn "重启 sing-box 失败, 请手动执行: systemctl restart sing-box"
+    fi
+}
+
 # ============================================================
 # 签发证书 (standalone 默认; 支持 DNS 通过环境变量)
 # ============================================================
@@ -236,9 +262,14 @@ _cert_acme_issue() {
 
     # 复制证书到统一目录
     mkdir -p "${CERT_ACME_DIR}/${domain}"
+    # renew-hook: acme.sh 自动 cron 续期成功后, 同步新证书到 sing-box 并重启加载。
+    # 路径在注册时即展开为绝对路径 (cron 环境无我们的变量), 否则 90 天后续期成功
+    # 但 cert.pem 还是旧证书 → 全部 TLS inbound 在旧证书过期后崩。
+    local renew_hook="cp -f '${CERT_ACME_DIR}/${domain}/fullchain.pem' '${SINGBOX_DIR}/cert.pem' && cp -f '${CERT_ACME_DIR}/${domain}/privkey.pem' '${SINGBOX_DIR}/key.pem' && chmod 644 '${SINGBOX_DIR}/cert.pem' && chmod 600 '${SINGBOX_DIR}/key.pem' && (systemctl restart sing-box || true)"
     if ! "$ACME_BIN" --install-cert -d "$domain" \
         --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
-        --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" 2>/dev/null; then
+        --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
+        --renew-hook "$renew_hook" 2>/dev/null; then
         # 回退: 直接复制 acme.sh 仓库内证书
         local src_dir="${ACME_HOME}/${domain}"
         cp -f "${src_dir}/fullchain.cer" "${CERT_ACME_DIR}/${domain}/fullchain.pem" 2>/dev/null || true
@@ -260,10 +291,8 @@ _cert_acme_issue() {
         # 关键: 把真实证书覆盖到 sing-box 实际使用的 cert.pem/key.pem,
         # 这样 AnyTLS/TUIC/Hy2/VLESS-WS 的 inbound (硬编码指向 ${SINGBOX_DIR}/cert.pem)
         # 也一并切换到真证书, 无需逐个改 inbound。
-        if cp -f "${CERT_ACME_DIR}/${domain}/fullchain.pem" "${SINGBOX_DIR}/cert.pem" 2>/dev/null && \
-           cp -f "${CERT_ACME_DIR}/${domain}/privkey.pem" "${SINGBOX_DIR}/key.pem" 2>/dev/null; then
-            chmod 644 "${SINGBOX_DIR}/cert.pem"
-            chmod 600 "${SINGBOX_DIR}/key.pem"
+        # (argo-vless-ws 为回环明文 ws, 不引用证书, 不受影响)
+        if _cert_sync_cert "$domain"; then
             _info "已用真实证书覆盖 ${SINGBOX_DIR}/cert.pem / key.pem (全部 TLS inbound 生效)"
         else
             _warn "覆盖 ${SINGBOX_DIR}/cert.pem 失败, 请手动复制 acme 证书"
@@ -316,9 +345,23 @@ _cert_acme_renew() {
         _info "续期全部证书..."
         "$ACME_BIN" --renew-all 2>&1 | tail -10
     fi
-    # 重新落地
-    [ -n "$domain" ] && _cert_acme_issue "$domain" >/dev/null 2>&1
-    _success "续期完成 (已签证书会在 30 天内自动由 acme.sh cron 续期)"
+    # 同步到 sing-box 并重启加载。
+    # 注意: acme.sh 的自动 cron 只跑 --renew, 不会碰我们的 cert.pem, 因此手动续期
+    # 必须在这里显式同步 + 重启; 自动续期场景则靠签发时注册的 --renew-hook 完成。
+    local synced=0
+    if [ -n "$domain" ]; then
+        _cert_sync_cert "$domain" && synced=1
+    else
+        for d in "${CERT_ACME_DIR}"/*/; do
+            [ -d "$d" ] || continue
+            _cert_sync_cert "$(basename "$d")" && synced=1
+        done
+    fi
+    if [ "$synced" -eq 1 ]; then
+        _info "证书已同步到 sing-box (${SINGBOX_DIR}/cert.pem), 重启加载..."
+        _cert_reload_singbox
+    fi
+    _success "续期完成 (已签证书会在到期前由 acme.sh cron 自动续期, 续期后自动同步到 sing-box)"
 }
 
 # ============================================================

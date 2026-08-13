@@ -732,6 +732,23 @@ _sb_upgrade_scripts() {
     echo -e "  最新版本: ${remote_ver}"
     echo ""
 
+    # git 部署优先: install.sh 现在默认 git clone 部署 (github → VPS),
+    # 运行目录是 git 仓库时直接 git pull, 避免 curl 逐文件覆盖导致 git 工作区变脏
+    # (git pull 会连同 install.sh 等仓库内全部文件一起更新, 比逐文件更完整)
+    local repo_root="$(cd "$(dirname "$lib_dir")" 2>/dev/null && pwd)"
+    if [ -n "$repo_root" ] && [ -d "${repo_root}/.git" ] && command -v git >/dev/null 2>&1; then
+        _info "检测到 git 仓库部署, 使用 git pull 更新 (与 curl 逐文件等价)..."
+        # 注意: 不能用 `if git pull | tail` 判断——管道退出码取 tail(恒0) 会误判成功
+        local pull_log="/tmp/sb_gitpull.log"
+        if git -C "$repo_root" pull --ff-only >"$pull_log" 2>&1; then
+            _success "git pull 更新完成: $(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null)"
+            read -p "按回车键返回..."
+            return 0
+        fi
+        _warn "git pull 失败: $(tail -3 "$pull_log" | tr '\n' ' ')"
+        _warn "回退 curl 逐文件更新..."
+    fi
+
     # 备份
     local backup_dir="${lib_dir}/../.backup.$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
