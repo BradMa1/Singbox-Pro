@@ -205,11 +205,16 @@ _cert_acme_issue() {
             if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
                 dns_mode="detected"
             fi
+            _cf_from_interactive=1
         fi
     fi
 
     if [ -n "$dns_mode" ]; then
-        _info "检测到 DNS API 环境变量，使用 DNS-01 挑战 (无需开放 80 端口)..."
+        if [ -n "${_cf_from_interactive:-}" ]; then
+            _info "已采用你输入的 Cloudflare 凭证，使用 DNS-01 挑战 (无需开放 80 端口)..."
+        else
+            _info "检测到 DNS API 环境变量，使用 DNS-01 挑战 (无需开放 80 端口)..."
+        fi
         # 根据环境变量自动选择 acme.sh DNS 插件 (不能只传 --dns, 必须指定具体插件)
         local dns_plugin=""
         if env | grep -qiE '^CF_Token|^CF_Key' ; then

@@ -19,6 +19,18 @@ fi
 DEFAULT_SNI="${DEFAULT_SNI:-www.amd.com}"
 DEFAULT_ALPN="${DEFAULT_ALPN:-h2,http/1.1}"
 
+# 把 host 格式化为 URI 安全形式: IPv6 地址必须加方括号, IPv4/域名原样返回。
+# 纯 IPv6 VPS 场景下 _get_public_ip 会返回 IPv6, 若不加方括号会导致
+# vless://...@ipv6:port 这类链接解析失败 (客户端把整个地址当 host 直到第一个冒号)。
+# 用法: $(_proto_fmt_host "$host"):${port}
+_proto_fmt_host() {
+    local h="$1"
+    case "$h" in
+        *:*) echo "[$h]" ;;   # 含冒号即视为 IPv6
+        *)   echo "$h" ;;     # IPv4 / 域名
+    esac
+}
+
 # ============================================================
 # 1. VLESS Reality
 # ============================================================
@@ -89,7 +101,7 @@ _proto_reality_uri() {
     fi
     [ -n "$host" ] || host="$server_ip"
 
-    echo -n "vless://${uuid}@${host}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
+    echo -n "vless://${uuid}@$(_proto_fmt_host "$host"):${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
 }
 
 # VLESS over WebSocket + TLS 链接 (sing-box 1.11+ 原生支持, 替代已移除的 VMess)
@@ -132,7 +144,7 @@ _proto_vless_ws_uri() {
     else
         insecure="&insecure=1"
     fi
-    echo -n "vless://${uuid}@${host}:${port}?type=ws&security=tls&sni=${sni}&fp=chrome&path=${penc}${insecure}#${ep}"
+    echo -n "vless://${uuid}@$(_proto_fmt_host "$host"):${port}?type=ws&security=tls&sni=${sni}&fp=chrome&path=${penc}${insecure}#${ep}"
 }
 
 # 从 reality 私钥推导公钥 (X25519)。
@@ -199,7 +211,7 @@ _proto_anytls_uri() {
         qs="?insecure=1"
     fi
     [ -n "$host" ] || host="$server_ip"
-    echo -n "anytls://${password}@${host}:${port}${qs}#${ep}"
+    echo -n "anytls://${password}@$(_proto_fmt_host "$host"):${port}${qs}#${ep}"
 }
 
 # ============================================================
@@ -244,7 +256,7 @@ _proto_tuic_uri() {
         extra="&allow_insecure=1"
     fi
     [ -n "$host" ] || host="$server_ip"
-    echo -n "tuic://${uuid}:${password}@${host}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3${extra}#${ep}"
+    echo -n "tuic://${uuid}:${password}@$(_proto_fmt_host "$host"):${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3${extra}#${ep}"
 }
 
 # ============================================================
@@ -293,7 +305,7 @@ _proto_hy2_uri() {
     local ep=$(_url_encode "$name")
     # 注意: insecure 含前导 '?', 自签时输出 '?insecure=1', 真实证书时为空,
     # 因此拼成 host:port?insecure=1 / host:port#name, 不带多余的 '/'
-    echo -n "hysteria2://${password}@${host}:${port}${insecure}#${ep}"
+    echo -n "hysteria2://${password}@$(_proto_fmt_host "$host"):${port}${insecure}#${ep}"
 }
 
 # ============================================================
@@ -343,7 +355,7 @@ _proto_trojan_uri() {
         fi
     fi
     local ep=$(_url_encode "$name")
-    echo -n "trojan://${password}@${host}:${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
+    echo -n "trojan://${password}@$(_proto_fmt_host "$host"):${port}?security=tls&sni=${sni}&allowInsecure=${insecure}#${ep}"
 }
 
 # ============================================================
@@ -381,7 +393,7 @@ _proto_ss2022_uri() {
     # SIP002 标准: ss://base64(method:password)@host:port#name
     # 内部 PSK 已是 base64 (含 +/ =), 外层 base64 后会再编码, 无需手动转 url-safe
     local userinfo=$(printf '%s:%s' "$method" "$psk" | base64 2>/dev/null | tr -d '\n=')
-    echo -n "ss://${userinfo}@${host}:${port}#${ep}"
+    echo -n "ss://${userinfo}@$(_proto_fmt_host "$host"):${port}#${ep}"
 }
 
 # ============================================================
@@ -417,7 +429,7 @@ _proto_socks5_uri() {
         host="${SERVER_DOMAIN:-$server_ip}"
     fi
     [ -n "$host" ] || host="$server_ip"
-    echo -n "socks5://${user}:${pass}@${host}:${port}#${ep}"
+    echo -n "socks5://${user}:${pass}@$(_proto_fmt_host "$host"):${port}#${ep}"
 }
 
 # ============================================================
