@@ -291,7 +291,9 @@ _proto_hy2_uri() {
     [ -n "$host" ] || host="$server_ip"
 
     local ep=$(_url_encode "$name")
-    echo -n "hysteria2://${password}@${host}:${port}/${insecure}#${ep}"
+    # 注意: insecure 含前导 '?', 自签时输出 '?insecure=1', 真实证书时为空,
+    # 因此拼成 host:port?insecure=1 / host:port#name, 不带多余的 '/'
+    echo -n "hysteria2://${password}@${host}:${port}${insecure}#${ep}"
 }
 
 # ============================================================
@@ -782,7 +784,19 @@ _proto_add_inbound() {
     local inbound_json="$1"
 
     # P0 #1: 写入前先校验「协议/传输/flow 兼容性」, 杜绝 ws+flow 等矛盾配置进入生产
-    _proto_validate_flow_compat "$CONFIG_FILE" || return 1
+    # 关键: 必须校验【合并后】的配置 (旧 + 本次新 inbound), 否则只校验旧文件会漏掉
+    # 新节点的矛盾配置 (例如新建 vless-ws + xtls-rprx-vision 不会被拦住)。
+    local tmp_cfg="/tmp/sb_flow_check_$$.json"
+    if ! jq ".inbounds += [${inbound_json}]" "$CONFIG_FILE" > "$tmp_cfg" 2>/dev/null; then
+        _error "添加入站配置失败 (JSON 合并异常)"
+        rm -f "$tmp_cfg"
+        return 1
+    fi
+    if ! _proto_validate_flow_compat "$tmp_cfg"; then
+        rm -f "$tmp_cfg"
+        return 1
+    fi
+    rm -f "$tmp_cfg"
 
     if ! _atomic_modify_json "$CONFIG_FILE" ".inbounds += [${inbound_json}]"; then
         _error "添加入站配置失败"
