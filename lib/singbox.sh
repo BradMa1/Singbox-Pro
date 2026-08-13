@@ -702,6 +702,19 @@ _streaming_dns_remove() {
 # 脚本升级
 # ============================================================
 
+# 升级成功后自动重启面板: bash 启动时就把全部函数加载进内存, 磁盘更新不会刷新当前进程,
+# 不重启的话用户必须退出 sb 重新打开才能用上新代码。exec 直接替换当前进程 → 无缝回到新主菜单。
+_sb_relaunch_panel() {
+    local entry="${SELF_PATH:-$(readlink -f "$0")}"
+    [ -x "$entry" ] || entry="/usr/local/share/singbox-pro/sb.sh"
+    if [ -x "$entry" ]; then
+        echo ""
+        _info "代码已更新，正在自动重启面板 (无需手动退出重进)..."
+        exec bash "$entry"
+    fi
+    _warn "自动重启失败 (入口 ${entry} 不可执行)，请退出后重新输入 sb"
+}
+
 _sb_upgrade_scripts() {
     echo -e "${CYAN}=== 升级管理脚本 ===${NC}"
     echo ""
@@ -742,6 +755,7 @@ _sb_upgrade_scripts() {
         local pull_log="/tmp/sb_gitpull.log"
         if git -C "$repo_root" pull --ff-only >"$pull_log" 2>&1; then
             _success "git pull 更新完成: $(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null)"
+            _sb_relaunch_panel
             read -p "按回车键返回..."
             return 0
         fi
@@ -802,15 +816,14 @@ _sb_upgrade_scripts() {
     if [ "$fail" -eq 0 ]; then
         _success "所有 ${success} 个文件升级成功！"
         _info "备份文件: ${backup_dir}"
-        if [ "$success" -gt 0 ] && [ "$fail" -eq 0 ]; then
-            echo -e "  ${YELLOW}建议执行 sb restart 重启服务使变更生效${NC}"
-        fi
+        # 管理脚本代码已加载进当前进程, 自动重启面板使新代码生效
+        _sb_relaunch_panel
+        read -p "自动重启失败，按回车键返回旧面板 (新代码需退出重进生效)..."
     else
         _warn "${success} 成功，${fail} 失败"
         _info "备份文件: ${backup_dir}"
+        read -p "按回车键返回..."
     fi
-
-    read -p "按回车键返回..."
 }
 
 # ============================================================

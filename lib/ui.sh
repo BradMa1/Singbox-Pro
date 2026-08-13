@@ -55,7 +55,8 @@ _str_pad_cjk() {
 _ui_banner() {
     clear
     # 每次渲染从磁盘 lib/core.sh 重读 PROJECT_VERSION,
-    # 升级脚本后回到主菜单即可看到新版本, 无需退出 sb 重启
+    # 因此升级后版本号立即反映新值; 至于函数级新代码, 升级成功路径会 exec 自动重启面板,
+    # 无需手动退出 sb 重进 (见 _sb_relaunch_panel)。
     # 不依赖外部 SCRIPT_DIR 变量, 直接用 BASH_SOURCE[0] 推项目根
     local real_version="${SCRIPT_VERSION}"
     local _lib_dir
