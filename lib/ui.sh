@@ -1479,7 +1479,7 @@ _ui_view_nodes() {
                     # VLESS-WS: 普通 TLS + WebSocket, 不需要 pbk/sid
                     local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
                     local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
-                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name")
+                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name" "$tag")
                 fi
                 echo -e "      链接: ${GREEN}${uri}${NC}"
                 ;;
@@ -1922,7 +1922,7 @@ _ui_subscription() {
                 else
                     local sni=$(echo "$line" | jq -r '.tls.server_name // empty')
                     local ws_path=$(echo "$line" | jq -r '.transport.path // "/ws"')
-                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name")
+                    uri=$(_proto_vless_ws_uri "$uuid" "$server_ip" "$port" "${sni:-$server_ip}" "$ws_path" "$name" "$tag")
                 fi
                 ;;
             anytls)

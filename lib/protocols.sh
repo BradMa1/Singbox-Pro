@@ -97,12 +97,27 @@ _proto_reality_uri() {
 # 不需要 pbk/sid。客户端 (v2rayN sing-box 核心) 信任证书或开跳过证书验证即可。
 _proto_vless_ws_uri() {
     local uuid="$1" server_ip="$2" port="$3" sni="${4:-$server_ip}"
-    local ws_path="${5:-/ws}" name="$6"
+    local ws_path="${5:-/ws}" name="$6" tag="${7:-}"
     local ep=$(_url_encode "$name")
     local penc=$(_url_encode "$ws_path")
-    # 进阶(真实证书): host/sni 用域名且去掉 insecure; 默认(自签): IP + insecure=1
+
+    # 优先判断是否为 Argo 隧道节点: Argo 节点的 host/sni 必须是隧道域名,
+    # 端口固定为 443 (Cloudflare 边缘), 与是否有真实证书无关。
+    local argo_domain=""
+    if [ -n "$tag" ] && [ -f "${ARGO_METADATA_FILE:-}" ]; then
+        argo_domain=$(jq -r ".\"$tag\".domain // empty" "$ARGO_METADATA_FILE" 2>/dev/null)
+    fi
+    # 调用方未传 tag 时, 按本地端口匹配 Argo 元数据兜底
+    if [ -z "$argo_domain" ] && [ -f "${ARGO_METADATA_FILE:-}" ]; then
+        argo_domain=$(jq -r "[.[] | select(.local_port == ($port|tonumber)) | .domain] | first // empty" "$ARGO_METADATA_FILE" 2>/dev/null)
+    fi
+
     local host="$server_ip" insecure=""
-    if _real_cert_ready; then
+    if [ -n "$argo_domain" ]; then
+        host="$argo_domain"
+        sni="$argo_domain"
+        port=443
+    elif _real_cert_ready; then
         host="$SERVER_DOMAIN"
         sni="$SERVER_DOMAIN"
     else
@@ -835,9 +850,14 @@ _proto_get_uri() {
         vmess-ws|vless-ws)
             local uuid="$1" ws_path="${2:-/ws}"
             if [ "$proto" = "vless-ws" ]; then
+                # 查找该端口对应的 Argo 隧道 tag, 让 _proto_vless_ws_uri 优先使用隧道域名
+                local argo_tag=""
+                if [ -f "${ARGO_METADATA_FILE:-}" ]; then
+                    argo_tag=$(jq -r "[to_entries[] | select(.value.local_port == ($port|tonumber)) | .key][0] // empty" "$ARGO_METADATA_FILE" 2>/dev/null)
+                fi
                 # 注意: _proto_vless_ws_uri 签名比 vmess 多一个 sni 参数 (第4位),
                 # 必须显式传 sni (默认=server_ip), 否则 ws_path/name 会整体错位一位
-                _proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$server_ip" "$ws_path" "$name"
+                _proto_vless_ws_uri "$uuid" "$server_ip" "$port" "$server_ip" "$ws_path" "$name" "$argo_tag"
             else
                 _proto_vmess_ws_uri "$uuid" "$server_ip" "$port" "$ws_path" "$name"
             fi
