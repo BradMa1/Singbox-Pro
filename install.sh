@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="${PROJECT_VERSION:-2.0.9}"
+export SCRIPT_VERSION="2.2.5"
 # PROJECT_VERSION(SSOT) 由 lib/core.sh 定义；若已下载 lib 则提前 source 以获取真实版本号，
 # 否则用上面的兜底字面量（首次 curl 管道安装、lib 尚未下载的场景）。
 

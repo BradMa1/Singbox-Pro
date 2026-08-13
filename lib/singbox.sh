@@ -722,7 +722,9 @@ _sb_upgrade_scripts() {
     local repo="https://raw.githubusercontent.com/BradMa1/Singbox-Pro/main"
     local lib_dir="$(dirname "$(readlink -f "$0")")/lib"
 
-    # 检测最新版本号: 读 lib/core.sh 的 PROJECT_VERSION（SSOT，所有模块统一引用）。
+    # 检测最新版本号: 读 lib/core.sh 的 PROJECT_VERSION_FALLBACK（静态最新发布基线，
+    # 所有模块统一引用）。PROJECT_VERSION 现由 git describe 动态派生, 不再含静态字面量,
+    # 故此处抓取 FALLBACK 常量作为"已发布最新版"基准。
     # 若设置了 GH_PROXY 优先走镜像, 避免主源 CDN 缓存导致"永远旧版本"的假象。
     _info "正在检查最新版本..."
     local src="${repo}"
@@ -730,10 +732,10 @@ _sb_upgrade_scripts() {
         src="${GH_PROXY%/}/${repo#https://}"
     fi
     local remote_ver
-    remote_ver=$(curl -fsSL --connect-timeout 10 "${src}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
+    remote_ver=$(curl -fsSL --connect-timeout 10 "${src}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION_FALLBACK="\([^"]*\)".*/\1/p' | head -1 || echo "")
     if [ -z "$remote_ver" ]; then
         _warn "镜像检查失败，回退主源..."
-        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")
+        remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/lib/core.sh" 2>/dev/null | sed -n 's/^export PROJECT_VERSION_FALLBACK="\([^"]*\)".*/\1/p' | head -1 || echo "")
     fi
     if [ -z "$remote_ver" ]; then
         remote_ver=$(curl -fsSL --connect-timeout 10 "${repo}/install.sh" 2>/dev/null | sed -n 's/^export SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1 || echo "")

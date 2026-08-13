@@ -4,8 +4,27 @@
 # 被 sb.sh source 加载，也可独立运行进行环境检测
 # ============================================================
 # 管理脚本版本号 SSOT（唯一字面量来源）:
-#   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它，改版本号只需改这一处。
-export PROJECT_VERSION="2.2.5"
+#   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
+#   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
+#   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
+export PROJECT_VERSION_FALLBACK="2.2.5"
+
+# 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
+_get_project_version() {
+    local fallback="${PROJECT_VERSION_FALLBACK}"
+    if command -v git >/dev/null 2>&1; then
+        local root
+        root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+        if [ -n "$root" ]; then
+            local d
+            d="$(git -C "$root" describe --tags --dirty 2>/dev/null || true)"
+            [ -n "$d" ] && fallback="${d#v}"
+        fi
+    fi
+    printf '%s' "$fallback"
+}
+
+export PROJECT_VERSION="$(_get_project_version)"
 export SCRIPT_VERSION="${PROJECT_VERSION}"
 
 # --- 颜色定义 ---

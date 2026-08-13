@@ -54,31 +54,25 @@ _str_pad_cjk() {
 
 _ui_banner() {
     clear
-    # 每次渲染从磁盘 lib/core.sh 重读 PROJECT_VERSION,
-    # 因此升级后版本号立即反映新值; 至于函数级新代码, 升级成功路径会 exec 自动重启面板,
-    # 无需手动退出 sb 重进 (见 _sb_relaunch_panel)。
-    # 不依赖外部 SCRIPT_DIR 变量, 直接用 BASH_SOURCE[0] 推项目根
-    local real_version="${SCRIPT_VERSION}"
-    local _lib_dir
-    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-    if [ -n "$_lib_dir" ] && [ -f "$_lib_dir/core.sh" ]; then
-        real_version=$(grep -oE 'PROJECT_VERSION="[^"]+"' "$_lib_dir/core.sh" 2>/dev/null \
-            | head -1 | sed -E 's/PROJECT_VERSION="([^"]+)"/\1/')
+    # 版本号优先从 git 自动派生 (describe --tags)，保证与当前代码精确一致；
+    # 非 git 安装时回退 PROJECT_VERSION_FALLBACK。升级后无需重启也会反映最新。
+    local real_version="${SCRIPT_VERSION:-}"
+    if command -v git >/dev/null 2>&1; then
+        local _root
+        _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+        if [ -n "$_root" ]; then
+            local _d
+            _d="$(git -C "$_root" describe --tags --dirty 2>/dev/null || true)"
+            [ -n "$_d" ] && real_version="${_d#v}"
+        fi
     fi
-    [ -z "$real_version" ] && real_version="${PROJECT_VERSION:-2.2.x}"
+    [ -z "$real_version" ] && real_version="${PROJECT_VERSION_FALLBACK:-${PROJECT_VERSION:-2.2.x}}"
 
     local w=48  # 内部宽度
     local l1="Singbox-Pro   v${real_version}"
     local l2="Multi-Protocol Proxy"
-
-    # 显示运行实例对应的 git commit 短哈希, 便于排查「git pull 了但 sb 还是旧代码」的问题
-    # (sb 软链常指向旧目录拷贝, 导致 pull 不生效; 有哈希即可一眼对比)
-    local commit_hash=""
-    if command -v git >/dev/null 2>&1 && [ -d "$_lib_dir/../.git" ]; then
-        commit_hash=$(git -C "$_lib_dir/.." rev-parse --short HEAD 2>/dev/null)
-    fi
+    # 版本号已含 git 精确信息 (tag-N-ghash / dirty)，不再单独显示 build 行
     local l3=""
-    [ -n "$commit_hash" ] && l3="build ${commit_hash}"
 
     # 动态计算居中 padding
     local p1=$(( (w - ${#l1}) / 2 ))
