@@ -1880,10 +1880,9 @@ _ui_subscription() {
     echo -e "${CYAN}=== 节点分享（订阅 + 二维码）===${NC}"
     echo ""
 
+    # server_ip 供各协议 URI 生成使用; 不再单独打印「服务器 IP」行——
+    # 订阅链接里已含服务器地址, 前面多出的说明文字只会干扰整段复制
     local server_ip=$(_get_public_ip)
-    echo -e "服务器 IP: ${GREEN}${server_ip}${NC}"
-    [ -n "${SERVER_DOMAIN:-}" ] && echo -e "服务器域名: ${GREEN}${SERVER_DOMAIN}${NC}"
-    echo ""
 
     # 收集所有节点 URI
     local -a node_names=()

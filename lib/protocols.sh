@@ -159,12 +159,14 @@ _proto_anytls_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
     local ep=$(_url_encode "$name")
     # 进阶(真实证书): host 改用域名且不再跳过验证; 默认(自签): IP + insecure=1
+    # host 双重兜底: 变量异常时绝不允许输出空 host (否则客户端丢弃该节点)
     local host="$server_ip" qs=""
     if _real_cert_ready; then
-        host="$SERVER_DOMAIN"
+        host="${SERVER_DOMAIN:-$server_ip}"
     else
         qs="?insecure=1"
     fi
+    [ -n "$host" ] || host="$server_ip"
     echo -n "anytls://${password}@${host}:${port}${qs}#${ep}"
 }
 
@@ -202,12 +204,14 @@ _proto_tuic_uri() {
     local uuid="$1" password="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
     # 进阶(真实证书): host 用域名且去掉 allow_insecure; 默认(自签): IP + allow_insecure=1
+    # host 双重兜底: 变量异常时绝不允许输出空 host (否则客户端丢弃该节点)
     local host="$server_ip" extra=""
     if _real_cert_ready; then
-        host="$SERVER_DOMAIN"
+        host="${SERVER_DOMAIN:-$server_ip}"
     else
         extra="&allow_insecure=1"
     fi
+    [ -n "$host" ] || host="$server_ip"
     echo -n "tuic://${uuid}:${password}@${host}:${port}?version=5&congestion_control=bbr&udp_relay_mode=native&alpn=h3${extra}#${ep}"
 }
 
@@ -245,12 +249,14 @@ _proto_hy2_uri() {
     local password="$1" server_ip="$2" port="$3" name="$4"
 
     # 进阶(真实证书): host 用域名且去掉 insecure; 默认(自签): IP + insecure=1
+    # host 双重兜底: 变量异常时绝不允许输出空 host (否则客户端丢弃该节点)
     local host="$server_ip" insecure=""
     if _real_cert_ready; then
-        host="$SERVER_DOMAIN"
+        host="${SERVER_DOMAIN:-$server_ip}"
     else
         insecure="?insecure=1"
     fi
+    [ -n "$host" ] || host="$server_ip"
 
     local ep=$(_url_encode "$name")
     echo -n "hysteria2://${password}@${host}:${port}/${insecure}#${ep}"
@@ -637,8 +643,12 @@ _real_cert_ready() {
         domain="$(cat "${SINGBOX_DIR}/.server_domain" 2>/dev/null | tr -d '[:space:]')"
     [ -n "$domain" ] || return 1
     local acme_dir="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
-    [ -f "${acme_dir}/${domain}/fullchain.pem" ] && return 0
-    return 1
+    [ -f "${acme_dir}/${domain}/fullchain.pem" ] || return 1
+    # 关键: 从文件读到的域名回写变量并导出, 否则「同一 sb 会话内签发证书后」
+    # SERVER_DOMAIN 变量仍为空 → anytls/tuic/hy2 的 URI host 取到空值 → 订阅节点失效
+    # (曾实测: 订阅 5 节点只剩 vless/trojan 2 个, 其余 3 个因 host 为空被客户端丢弃)
+    export SERVER_DOMAIN="${domain}"
+    return 0
 }
 
 _cert_public_key_sha256() {
