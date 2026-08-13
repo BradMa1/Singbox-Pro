@@ -56,13 +56,14 @@ _ui_banner() {
     clear
     # 版本号优先从 git 自动派生 (describe --tags)，保证与当前代码精确一致；
     # 非 git 安装时回退 PROJECT_VERSION_FALLBACK。升级后无需重启也会反映最新。
-    local real_version="${SCRIPT_VERSION:-}"
+    local real_version="${PROJECT_VERSION_FALLBACK:-}"
+    # banner 只显示干净的 release tag (如 2.2.5), 不显示 -N-ghash 后缀, 保持界面简洁
     if command -v git >/dev/null 2>&1; then
         local _root
         _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
         if [ -n "$_root" ]; then
             local _d
-            _d="$(git -C "$_root" describe --tags --dirty 2>/dev/null || true)"
+            _d="$(git -C "$_root" describe --tags --abbrev=0 2>/dev/null || true)"
             [ -n "$_d" ] && real_version="${_d#v}"
         fi
     fi
