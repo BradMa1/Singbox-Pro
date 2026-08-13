@@ -81,7 +81,15 @@ _proto_reality_uri() {
     }
     local fp="chrome"
 
-    echo -n "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
+    # 进阶(真实证书): host 改用域名以隐藏真实 IP; 默认(无真实证书): 保留 IP
+    # 与 AnyTLS/TUIC/Hy2/Trojan 行为保持一致
+    local host="$server_ip"
+    if _real_cert_ready; then
+        host="${SERVER_DOMAIN:-$server_ip}"
+    fi
+    [ -n "$host" ] || host="$server_ip"
+
+    echo -n "vless://${uuid}@${host}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=${fp}&pbk=${pbk}&sid=${short_id}#${ep}"
 }
 
 # VLESS over WebSocket + TLS 链接 (sing-box 1.11+ 原生支持, 替代已移除的 VMess)
@@ -338,10 +346,16 @@ EOF
 _proto_ss2022_uri() {
     local method="$1" psk="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
+    # 进阶(真实证书/DNS): host 改用域名以隐藏真实 IP; 默认保留 IP
+    local host="$server_ip"
+    if _real_cert_ready; then
+        host="${SERVER_DOMAIN:-$server_ip}"
+    fi
+    [ -n "$host" ] || host="$server_ip"
     # SIP002 标准: ss://base64(method:password)@host:port#name
     # 内部 PSK 已是 base64 (含 +/ =), 外层 base64 后会再编码, 无需手动转 url-safe
     local userinfo=$(printf '%s:%s' "$method" "$psk" | base64 2>/dev/null | tr -d '\n=')
-    echo -n "ss://${userinfo}@${server_ip}:${port}#${ep}"
+    echo -n "ss://${userinfo}@${host}:${port}#${ep}"
 }
 
 # ============================================================
@@ -371,7 +385,13 @@ EOF
 _proto_socks5_uri() {
     local user="$1" pass="$2" server_ip="$3" port="$4" name="$5"
     local ep=$(_url_encode "$name")
-    echo -n "socks5://${user}:${pass}@${server_ip}:${port}#${ep}"
+    # 进阶(真实证书/DNS): host 改用域名以隐藏真实 IP; 默认保留 IP
+    local host="$server_ip"
+    if _real_cert_ready; then
+        host="${SERVER_DOMAIN:-$server_ip}"
+    fi
+    [ -n "$host" ] || host="$server_ip"
+    echo -n "socks5://${user}:${pass}@${host}:${port}#${ep}"
 }
 
 # ============================================================
