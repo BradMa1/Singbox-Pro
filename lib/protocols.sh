@@ -106,6 +106,15 @@ _proto_vless_ws_uri() {
     local argo_domain=""
     if [ -n "$tag" ] && [ -f "${ARGO_METADATA_FILE:-}" ]; then
         argo_domain=$(jq -r ".\"$tag\".domain // empty" "$ARGO_METADATA_FILE" 2>/dev/null)
+        if [ -n "$argo_domain" ]; then
+            # 防端口漂移: 元数据 local_port 与 config 实际端口不一致时,
+            # 隧道转发目标 ≠ inbound 监听端口, 客户端连上也会被后端拒绝。
+            # 注意: 本函数可能被命令替换调用, 警告必须输出到 stderr 才不会被吞。
+            local meta_port=$(jq -r ".\"$tag\".local_port // empty" "$ARGO_METADATA_FILE" 2>/dev/null)
+            if [ -n "$meta_port" ] && [ "$meta_port" != "$port" ]; then
+                _warn "Argo 节点 ${tag}: 元数据端口 ${meta_port} ≠ config 端口 ${port} (隧道转发到 ${meta_port}, 但 inbound 监听 ${port}), 请对齐后再用" >&2
+            fi
+        fi
     fi
     # 调用方未传 tag 时, 按本地端口匹配 Argo 元数据兜底
     if [ -z "$argo_domain" ] && [ -f "${ARGO_METADATA_FILE:-}" ]; then
