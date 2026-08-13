@@ -23,13 +23,11 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 > 上面命令优先用 `curl`，若系统没有 `curl` 会自动回退到 `wget`（仅装了 wget 的精简系统也能一键安装）。
 
-安装器会自动装好 `git` 并 **从 GitHub 克隆完整仓库** 到 `/usr/local/share/singbox-pro`。后续更新只需运行：
+安装器会自动装好 `git` 并 **从 GitHub 克隆完整仓库** 到 `/usr/local/share/singbox-pro`。
 
-```bash
-sb upgrade
-```
+后续更新脚本，直接在 `sb` 面板里操作即可：进入主菜单选 **[17] 升级脚本**，它会自动拉取最新代码（优先 `git pull`，无 git 时回退 curl 逐文件下载）并刷新面板，无需退出重进。
 
-> `sb upgrade` 会自动拉取最新脚本（优先 git pull，无 git 时回退 curl 逐文件下载）并刷新管理面板，无需手动 `git pull` 或退出重进。
+> 等价命令：在 shell 里运行 `sb upgrade` 也是同一个升级流程。
 
 如遇Alpine系统无法安装，可先执行以下命令：
 ```
