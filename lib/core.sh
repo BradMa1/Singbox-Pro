@@ -172,11 +172,36 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
              timeout 5 curl -s4 --max-time 2 ip.sb 2>/dev/null)
         [ -z "$ip" ] && ip=$(timeout 5 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
                               timeout 5 curl -s6 --max-time 2 ipinfo.io/ip 2>/dev/null)
+        # 网卡是内网 + 探测到 WARP/CDN 出口 IP → 几乎可以肯定不是可入站的入口 IP
+        # （常见于 NAT LXC / 宿主机 WARP 出站，节点会全部连接超时）
+        if _is_warp_or_cdn_ip "$ip"; then
+            _warn "探测到的公网 IP ${ip} 属于 Cloudflare WARP 出口段，很可能无法入站连接。"
+            _warn "NAT/LXC 机器请在主菜单 [18] 入口 IP 设置 里手动填写面板给出的真实入口 IP。"
+        fi
         server_ip="$ip"
         echo "$ip"
     }
 fi
 _get_ip() { _get_public_ip; }
+
+# --- WARP / CDN 出口 IP 识别 ---
+# Cloudflare WARP 出口段:
+#   IPv4 104.16.0.0/12 (104.16-104.31)、188.114.96.0/19 (188.114.96-127)
+#   IPv6 2a09:bac1::/32
+# 机器出站走 WARP 或 NAT 时，公网 API 探测到的是「出口 IP」而非可入站的「入口 IP」，
+# 用它生成节点会导致客户端全部超时。此处仅用于告警，不阻断流程（部分地区确为真实入口）。
+if ! declare -f _is_warp_or_cdn_ip >/dev/null 2>&1; then
+    _is_warp_or_cdn_ip() {
+        local ip="${1:-}"
+        [ -z "$ip" ] && return 1
+        case "$ip" in
+            104.1[6-9].*|104.2[0-9].*|104.3[0-1].*)        return 0 ;;   # 104.16.0.0/12
+            188.114.9[6-9].*|188.114.1[0-1][0-9].*|188.114.12[0-7].*) return 0 ;;  # 188.114.96.0/19
+            2a09:bac1:*|2A09:BAC1:*)                        return 0 ;;   # WARP IPv6
+        esac
+        return 1
+    }
+fi
 
 # --- IPv6 (带缓存) ---
 ipv6_cache=""
@@ -456,6 +481,17 @@ if [ -z "${SERVER_DOMAIN:-}" ] && [ -f "${SINGBOX_DIR}/.server_domain" ]; then
     SERVER_DOMAIN="$(cat "${SINGBOX_DIR}/.server_domain" 2>/dev/null | tr -d '[:space:]')"
 fi
 export SERVER_DOMAIN="${SERVER_DOMAIN:-}"
+
+# --- NAT VPS 入口 IP 覆盖 (持久化) ---
+# NAT/LXC 容器、或出站走 WARP 的机器，公网 API 探测到的是「出口 IP」，
+# 与服务商面板分配的「入口 IP / 端口映射 IP」不同，用它生成节点会全部连接超时。
+# 优先级: 环境变量 SERVER_IP_OVERRIDE > 持久化文件 ${SINGBOX_DIR}/.server_ip > 自动探测
+# 菜单入口: sb 主菜单 [18] 入口 IP 设置
+export SERVER_IP_FILE="${SERVER_IP_FILE:-${SINGBOX_DIR}/.server_ip}"
+if [ -z "${SERVER_IP_OVERRIDE:-}" ] && [ -f "${SERVER_IP_FILE}" ]; then
+    SERVER_IP_OVERRIDE="$(cat "${SERVER_IP_FILE}" 2>/dev/null | tr -d '[:space:]')"
+fi
+export SERVER_IP_OVERRIDE="${SERVER_IP_OVERRIDE:-}"
 
 # --- 独立运行时的环境检测 ---
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

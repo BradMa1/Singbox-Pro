@@ -115,7 +115,11 @@ _ui_status_panel() {
 
     echo -e "  地区: ${YELLOW}${region}${NC} | ${host}"
     echo -e "  系统: ${os_info} | BBR: ${bbr} | CPU: ${cpu} | 内存: ${mem} | 磁盘: ${disk}"
-    echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+    if [ -n "${SERVER_IP_OVERRIDE:-}" ]; then
+        echo -e "  IPv4: ${GREEN}${ip}${NC} ${YELLOW}(入口 IP 手动指定)${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+    else
+        echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+    fi
     echo ""
     echo -e "  ${CYAN}Sing-box${NC} v${sb_ver} ${sb_status} | ${CYAN}Argo${NC} ${argo_status} | ${CYAN}WARP${NC} ${warp_status} | 节点: ${node_count}"
     echo ""
@@ -147,6 +151,7 @@ _ui_main_menu() {
         echo -e "    ${GREEN}[9]${NC} 中转管理          ${GREEN}[10]${NC} WARP 管理"
         echo -e "    ${GREEN}[11]${NC} IPv6 优化        ${GREEN}[12]${NC} 流媒体 DNS"
         echo -e "    ${GREEN}[13]${NC} 证书管理(ACME 真实证书)"
+        echo -e "    ${GREEN}[18]${NC} 入口 IP 设置(NAT/WARP 机器必看)"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
@@ -160,7 +165,7 @@ _ui_main_menu() {
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-17]: " choice
+        read -p "  请输入选项 [0-18]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -180,6 +185,7 @@ _ui_main_menu() {
             15) _ui_uninstall ;;
             16) _ui_health_check ;;
             17) _ui_upgrade_scripts ;;
+            18) _ui_server_ip_menu ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1319,7 +1325,11 @@ _ui_ipv6_menu() {
         clear
         echo -e "${CYAN}=== IPv6 优化 ===${NC}"
         echo ""
+        local nic_ip6
+        nic_ip6=$(ip -6 addr show scope global 2>/dev/null \
+                  | grep -oP 'inet6 \K[0-9a-fA-F:]+' | grep -vE '^(fd|fc)' | head -1)
         echo -e "  当前状态: $(_dns_ipv6_status)"
+        echo -e "  本机公网 IPv6: ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
         echo ""
         echo -e "  让 sing-box 出站连接优先使用 IPv6，有助于解锁流媒体。"
         echo -e "  前提: VPS 必须有公网 IPv6 地址。"
@@ -1332,8 +1342,80 @@ _ui_ipv6_menu() {
         read -p "  请输入选项 [0-2]: " choice
 
         case $choice in
-            1) _dns_ipv6_enable; read -p "按回车继续..."; ;;
+            1)
+                if [ -z "$nic_ip6" ]; then
+                    _warn "未检测到公网 IPv6（fd/fc 开头的是内网 ULA 地址）。"
+                    _warn "这类机器启用 IPv6 优先后，出站仍会被迫走 IPv6，容易解析失败。"
+                    read -p "  仍要继续? [y/N]: " _v6y
+                    [[ "$_v6y" =~ ^[Yy]$ ]] || { read -p "按回车继续..."; continue; }
+                fi
+                _dns_ipv6_enable; read -p "按回车继续..."; ;;
             2) _dns_ipv6_disable; read -p "按回车继续..."; ;;
+            0) return ;;
+            *) _warn "无效选项" ; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================================================
+# 入口 IP 设置 (NAT VPS / WARP 出站场景)
+# ============================================================
+# NAT LXC 或宿主机 WARP 出站的机器，脚本自动探测到的公网 IP 是「出口 IP」
+# （如 104.28.x.x），客户端连不进来，节点全部超时。此处把面板给出的真实
+# 入口 IP 持久化到 ${SERVER_IP_FILE}，之后所有节点生成都优先用它。
+_ui_server_ip_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=== 入口 IP 设置 (NAT VPS) ===${NC}"
+        echo ""
+
+        local nic_ip api_ip cur="${SERVER_IP_OVERRIDE:-}"
+        nic_ip=$(ip -4 addr show scope global 2>/dev/null \
+                 | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
+                 | grep -oP 'inet \K[\d.]+' | head -1)
+        api_ip=$(timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
+                 || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null)
+
+        echo -e "  网卡 IP      : ${nic_ip:-无}"
+        echo -e "  API 探测出口 : ${api_ip:-无}"
+        echo -e "  当前入口 IP  : ${GREEN}${cur:-（未设置 · 使用自动探测）}${NC}"
+        echo ""
+        echo -e "  ${YELLOW}什么情况需要设${NC}: 网卡是 10.x/172.16-31.x/192.168.x 内网地址，"
+        echo -e "  或探测到的 IP 是 104.16-104.31.x / 2a09:bac1: 这类 WARP 出口段。"
+        echo -e "  这时请把服务商面板给出的真实入口 IP（端口映射 IP）填在这里。"
+        echo ""
+        echo -e "    ${GREEN}[1]${NC} 设置/修改入口 IP"
+        echo -e "    ${GREEN}[2]${NC} 清除设置（恢复自动探测）"
+        echo ""
+        echo -e "    ${YELLOW}[0]${NC} 返回"
+        echo ""
+        read -p "  请输入选项 [0-2]: " choice
+
+        case $choice in
+            1)
+                echo ""
+                read -p "  请输入入口 IP（或域名）: " new_ip
+                new_ip="$(printf '%s' "$new_ip" | tr -d '[:space:]')"
+                if [ -z "$new_ip" ]; then
+                    _warn "未输入，已取消"
+                else
+                    mkdir -p "${SINGBOX_DIR}" 2>/dev/null
+                    printf '%s' "$new_ip" > "${SERVER_IP_FILE}" 2>/dev/null \
+                        && chmod 600 "${SERVER_IP_FILE}" 2>/dev/null
+                    export SERVER_IP_OVERRIDE="$new_ip"
+                    server_ip=""   # 清掉 _get_public_ip 的缓存
+                    _success "入口 IP 已保存: $new_ip"
+                    _info "之后生成的节点 / 订阅链接都会使用它"
+                fi
+                read -p "按回车继续..."
+                ;;
+            2)
+                rm -f "${SERVER_IP_FILE}" 2>/dev/null
+                export SERVER_IP_OVERRIDE=""
+                server_ip=""
+                _success "已清除，恢复自动探测"
+                read -p "按回车继续..."
+                ;;
             0) return ;;
             *) _warn "无效选项" ; sleep 1 ;;
         esac

@@ -300,6 +300,31 @@ Cloudflare 凭证通过环境变量 `export CF_Token=xxx CF_Account_ID=yyy` 注�
 
 ---
 
+## 入口 IP 设置（菜单 18 · NAT / WARP 机器必看）
+
+**症状**：节点生成完，客户端测速全部 `-1` / 超时，但 `ss -tlnp` 显示端口明明在监听。
+
+**原因**：NAT LXC 容器、或宿主机已接管 WARP 出站的机器，脚本自动探测到的公网 IP 是**出口 IP**（典型是 Cloudflare 段 `104.16-104.31.x` / `2a09:bac1:`），跟服务商面板分配的**入口 IP / 端口映射 IP** 不是同一个。把出口 IP 写进分享链接，客户端当然连不进来。
+
+| 选项 | 说明 |
+|:-----|:-----|
+| [1] 设置/修改入口 IP | 持久化写入 `/usr/local/etc/sing-box/.server_ip`，之后生成的节点/订阅都用它 |
+| [2] 清除设置 | 删除该文件，恢复自动探测 |
+
+**怎么判断中招**：
+
+```bash
+ip -4 addr show | grep inet      # 网卡是 10.x / 172.16-31.x / 192.168.x → 无公网网卡 IP
+curl -4 ip.sb                    # 探测结果是 104.16-104.31.x 等 → 是 WARP 出口，不是入口
+```
+
+两者同时成立就是中招了，去服务商面板找这台实例的真实入口 IP（端口映射 IP）填进菜单 18。
+
+> 探测到 WARP 出口段时，脚本会在状态栏和生成节点时自动告警（不阻断流程，少数地区入口确实在 WARP 段内）。
+> 也可用环境变量临时覆盖：`export SERVER_IP_OVERRIDE=1.2.3.4 && sb`
+
+---
+
 ## 端口转发（中转菜单 6）
 
 基于 iptables DNAT 的内核级端口转发，支持 TCP/UDP/双栈。
@@ -324,6 +349,7 @@ Cloudflare 凭证通过环境变量 `export CF_Token=xxx CF_Account_ID=yyy` 注�
 ├── argo_metadata.json   # Argo 隧道元数据
 ├── warp-meta.json       # WARP 域名分流元数据
 ├── .ipv6_dns_enabled    # IPv6 DNS 状态标记
+├── .server_ip           # NAT VPS 入口 IP 覆盖（菜单 18 写入）
 ├── .streaming_dns       # 流媒体 DNS 地址缓存
 ├── .server_info         # VPS 状态面板缓存（60 分钟有效）
 └── .backup.*/           # sb upgrade 自动备份目录
@@ -402,6 +428,13 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### 2026-10-03 (v2.2.5+)
+**新增/修复(NAT VPS 节点全部超时)**
+- **根因**：NAT LXC / 宿主机 WARP 出站的机器，自动探测的公网 IP 是 WARP 出口 IP（`104.16-104.31.x`、`2a09:bac1:`），与面板给的入口 IP 不同 → 生成的节点全部连不上。
+- **新增菜单 [18] 入口 IP 设置**：把真实入口 IP 持久化到 `${SINGBOX_DIR}/.server_ip`，优先级高于自动探测（环境变量 `SERVER_IP_OVERRIDE` 最高）。
+- **新增 WARP 出口识别告警**：探测结果落在 WARP 段且网卡是内网时，红字提示「很可能无法入站」并指向菜单 18（仅告警，不阻断）。
+- **IPv6 优化菜单**：顶部显示本机公网 IPv6（排除 `fd`/`fc` 内网 ULA），未检测到公网 IPv6 时启用前二次确认——避免在无 v6 的机器上改坏 DNS 配置。
 
 ### v2.0.9 (2026-07-24)
 **修复(TUIC 链接在小火箭被识别成 v4) — 重要**
