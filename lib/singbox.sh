@@ -278,7 +278,7 @@ _sb_fix_legacy_dns() {
         (.address != null) or
         (.port != null) or
         (has("type") | not) or
-        ((.server | type) == "string" and ((.server | test(":")) and ((.server | startswith("http")) | not)))
+        ((.server | type) == "string" and (.server | test("^(\\[[^]]+\\]|[^:]+):[0-9]+$")) and ((.server | startswith("http")) | not))
     ) ] | any' "$cfg" 2>/dev/null)
     [ "$need" = "true" ] || return 0
     cp "$cfg" "${cfg}.bak.$(date +%Y%m%d_%H%M%S)" 2>/dev/null
@@ -286,14 +286,18 @@ _sb_fix_legacy_dns() {
       .dns.servers |= map(
         (if has("address")
          then (
-           if (.address | type) == "string" and ((.address | test(":")) and ((.address | startswith("http")) | not))
+           if (.address | type) == "string" and (.address | test("^\\[[^]]+\\]:[0-9]+$"))
+           then (.server_port = ((.address | ltrimstr("[") | split("]:")[1] | tonumber)) | .server = (.address | ltrimstr("[") | split("]:")[0]))
+           elif (.address | type) == "string" and (.address | test("^[^:]+:[0-9]+$")) and ((.address | startswith("http")) | not)
            then (.server_port = ((.address | split(":")[1] | tonumber)) | .server = (.address | split(":")[0]))
            else (.server = .address)
            end
            | del(.address)
          ) else . end)
         | (if has("port") then (.server_port = (.port | tonumber)) | del(.port) else . end)
-        | (if (.server | type) == "string" and ((.server | test(":")) and ((.server | startswith("http")) | not))
+        | (if (.server | type) == "string" and (.server | test("^\\[[^]]+\\]:[0-9]+$"))
+           then (.server_port = ((.server | ltrimstr("[") | split("]:")[1] | tonumber)) | .server = (.server | ltrimstr("[") | split("]:")[0]))
+           elif (.server | type) == "string" and (.server | test("^[^:]+:[0-9]+$")) and ((.server | startswith("http")) | not)
            then (.server_port = ((.server | split(":")[1] | tonumber)) | .server = (.server | split(":")[0]))
            else . end)
         | (if (has("type") | not) then (.type = "udp") else . end)
@@ -307,9 +311,58 @@ _sb_fix_legacy_dns() {
     fi
 }
 
+# --- 远程规则集本地化 ---
+# 背景 (2026-10-04 真机事故): route.rule_set 用 type=remote 时，sing-box 每次启动都要
+# 联网从 GitHub 下载 geosite/geoip。一旦 DNS 或 GitHub 不通 →
+#   FATAL start service: initialize rule-set: ... context deadline exceeded
+# 进程直接退出 → systemd Restart=on-failure 无限重启（实测 restart counter 2054）
+# → 端口永远起不来 → 所有节点 -1。
+# 本函数把 remote 规则集下载成本地 .srs 并改写成 type=local，去掉启动期网络依赖。
+# 幂等：没有 remote 规则集时直接返回；下载失败则保持原状并告警。
+_sb_localize_rule_sets() {
+    local cfg="${1:-$CONFIG_FILE}"
+    command -v jq >/dev/null 2>&1 || return 0
+    [ -f "$cfg" ] || return 0
+
+    local remote_n
+    remote_n=$(jq -r '[ (.route.rule_set // [])[] | select(.type == "remote") ] | length' "$cfg" 2>/dev/null)
+    [ "${remote_n:-0}" -gt 0 ] 2>/dev/null || return 0
+
+    local dir="${SINGBOX_RULESET_DIR:-/usr/local/share/sing-box/rule-set}"
+    mkdir -p "$dir" 2>/dev/null
+    local tmp="${cfg}.ruleset.tmp"
+    cp "$cfg" "$tmp" 2>/dev/null || return 0
+
+    jq -r '.route.rule_set[] | select(.type == "remote") | "\(.tag)\t\(.url)"' "$cfg" 2>/dev/null \
+    | while IFS=$'\t' read -r tag url; do
+        [ -z "$tag" ] || [ -z "$url" ] && continue
+        local f="$dir/${tag}.srs"
+        if curl -fsL -m 60 -o "$f" "$url" 2>/dev/null && [ -s "$f" ]; then
+            if jq --arg t "$tag" --arg p "$f" \
+                '(.route.rule_set[] | select(.tag == $t and .type == "remote")) |= {tag: $t, type: "local", format: "binary", path: $p}' \
+                "$tmp" > "${tmp}.2" 2>/dev/null && [ -s "${tmp}.2" ]; then
+                mv "${tmp}.2" "$tmp"
+                _info "规则集已本地化: $tag"
+            else
+                rm -f "${tmp}.2"
+            fi
+        else
+            _warn "规则集下载失败，保持远程（启动仍需联网）: $tag"
+            rm -f "$f" 2>/dev/null
+        fi
+    done
+
+    if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
+        mv "$tmp" "$cfg"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # --- 重启服务并验证 ---
 _sb_restart_and_verify() {
     _sb_fix_legacy_dns "$CONFIG_FILE"
+    _sb_localize_rule_sets "$CONFIG_FILE"
 
     # 重启前先校验配置，避免配置语法错误导致 sing-box 启动失败、服务断线
     if [ -x "$SINGBOX_BIN" ] && [ -f "$CONFIG_FILE" ]; then

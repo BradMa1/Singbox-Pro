@@ -429,6 +429,16 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### 2026-10-04 (v2.2.5+)
+**修复(启动崩循环导致节点全部 -1) — 重要**
+- **现象**：HK 机器 5 个节点全 -1，`ss -tlnp` 无监听，`systemctl` 日志 `restart counter is at 2054`。
+- **根因**：`route.rule_set` 为 `type=remote`，sing-box 每次启动都要联网下载 geosite/geoip；DNS 或 GitHub 不通 → `FATAL initialize rule-set: ... context deadline exceeded` → 进程退出 → systemd 无限重启 → 端口永远起不来。**（与 IPv6 / 防火墙封锁无关）**
+- **修复**：新增 `_sb_localize_rule_sets()`，把远程规则集下载到 `/usr/local/share/sing-box/rule-set/*.srs` 并改写成 `type=local`，去掉启动期网络依赖；`_sb_restart_and_verify` 与 install 均自动调用，幂等，下载失败保持原状并告警。
+
+**修复(IPv6 DNS 被切成 "2400" + port 3200)**
+- `_sb_fix_legacy_dns` 原来只要 server 含冒号就按 `:` 拆分，把 IPv6 DNS `2400:3200::1` 切成 `server=2400 / server_port=3200` → sing-box 报 `missing domain resolver` 启动失败（IPv6 优化菜单必踩）。
+- 现在只在 `ip:port` / `host:port` / `[ipv6]:port` 形式下拆分，纯 IPv6 地址原样保留。
+
 ### 2026-10-03 (v2.2.5+)
 **新增/修复(NAT VPS 节点全部超时)**
 - **根因**：NAT LXC / 宿主机 WARP 出站的机器，自动探测的公网 IP 是 WARP 出口 IP（`104.16-104.31.x`、`2a09:bac1:`），与面板给的入口 IP 不同 → 生成的节点全部连不上。

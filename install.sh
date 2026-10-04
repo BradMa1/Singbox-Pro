@@ -444,6 +444,9 @@ EOF
         # 启动前自动修复 legacy DNS（sing-box 1.12+ 要求 type+server 新格式），
         # 避免保留旧 config 的机器在 install 直接 restart 时触发 FATAL
         _sb_fix_legacy_dns "$CONFIG_FILE"
+        # 把远程规则集(geosite/geoip)下载到本地，避免启动时依赖 GitHub 下载失败导致
+        # sing-box FATAL 退出 + systemd 无限重启（详见 singbox.sh:_sb_localize_rule_sets）
+        _sb_localize_rule_sets "$CONFIG_FILE"
 
         # 启动并验证；systemd 不可用时（容器未运行 systemd）回退 nohup
         _info "正在启动 sing-box..."
