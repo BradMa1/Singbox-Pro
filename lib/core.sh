@@ -203,6 +203,131 @@ if ! declare -f _is_warp_or_cdn_ip >/dev/null 2>&1; then
     }
 fi
 
+# ============================================================
+# IPv6 入口自检（IPv4 链路被封时的绕行方案）
+# ============================================================
+# 场景：客户端到 VPS 的 IPv4 被封锁/绕路（节点超时，或延迟高得离谱）。
+# 若 VPS 有「原生公网 IPv6」且入站双栈监听，把节点地址换成 IPv6 即可绕开 IPv4 链路。
+# 注意：这与「IPv6 优化」菜单完全是两回事 —— 那个改的是服务端出站 DNS 的解析顺序，
+#       跟客户端用什么地址连进来没有任何关系。
+
+# 列出网卡上的公网 IPv6（排除 ULA fd/fc、链路本地 fe80、回环）
+# 输出格式: "<地址> static|dynamic"，static 才是稳定地址（dynamic 是 SLAAC/临时地址）
+_nic_ipv6_list() {
+    ip -6 addr show scope global 2>/dev/null | awk '
+        /^[0-9]+: / {
+            iface = $2; sub(/:$/, "", iface)
+            skip = (iface ~ /docker|br-|veth|wgcf|^lo$|tailscale|^zt|^tun|^wg/)
+            next
+        }
+        /inet6/ && !skip {
+            split($2, a, "/"); addr = a[1]
+            if (addr ~ /^(fd|fc|fe80)/ || addr == "::1") next
+            kind = ($0 ~ /dynamic|temporary|mngtmpaddr/) ? "dynamic" : "static"
+            print addr " " kind
+        }'
+}
+
+# 优先返回静态 IPv6（无静态时退回第一个 dynamic）
+_nic_ipv6_preferred() {
+    local list static any
+    list="$(_nic_ipv6_list)"
+    [ -z "$list" ] && return 0
+    static="$(printf '%s\n' "$list" | awk '$2=="static"{print $1; exit}')"
+    if [ -n "$static" ]; then printf '%s' "$static"; return 0; fi
+    any="$(printf '%s\n' "$list" | awk 'NR==1{print $1}')"
+    printf '%s' "$any"
+}
+
+# 出站 IPv6（带缓存）—— 与网卡地址不一致说明走了隧道，该地址不可用于入站
+_ipv6_egress_cache=""
+_ipv6_egress_ip() {
+    if [ -n "$_ipv6_egress_cache" ]; then
+        [ "$_ipv6_egress_cache" = "NONE" ] && return 0
+        printf '%s' "$_ipv6_egress_cache"; return 0
+    fi
+    local ip6
+    ip6=$(timeout 6 curl -s6 --max-time 4 ip.sb 2>/dev/null \
+       || timeout 6 curl -s6 --max-time 4 icanhazip.com 2>/dev/null \
+       || timeout 6 curl -s6 --max-time 4 ifconfig.me 2>/dev/null)
+    ip6="$(printf '%s' "$ip6" | tr -d '[:space:]')"
+    if [ -z "$ip6" ]; then _ipv6_egress_cache="NONE"; return 0; fi
+    _ipv6_egress_cache="$ip6"
+    printf '%s' "$ip6"
+}
+
+# 入站是否双栈监听：inbound 的 listen 为 "::" 或未设置才接受 IPv6 连接。
+# 只要有一个 inbound 写了 IPv4 地址（如 0.0.0.0）就返回 1
+_ipv6_inbound_dualstack() {
+    local cfg="${CONFIG_FILE:-${SINGBOX_DIR}/config.json}"
+    [ -f "$cfg" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local bad
+    bad=$(jq -r '.inbounds[]?.listen // "::"' "$cfg" 2>/dev/null \
+          | grep -v '^::[[:space:]]*$' | grep -v '^::$' | head -1)
+    [ -z "$bad" ]
+}
+
+# IPv6 防火墙提示（不自动改规则，只提示）
+# 输出: "无防火墙(全放行)" / "已装 ip6tables，请确认放行端口" / "INPUT 默认 DROP，需手动放行"
+_ipv6_firewall_note() {
+    if ! command -v ip6tables >/dev/null 2>&1; then
+        printf '%s' "未检测到 ip6tables（默认全放行）"
+        return 0
+    fi
+    local rules
+    rules=$(ip6tables -S 2>/dev/null | grep -vE '^-P (INPUT|FORWARD|OUTPUT) ACCEPT' | head -5)
+    if [ -z "$rules" ]; then
+        printf '%s' "无 IPv6 防火墙规则（全放行）"
+        return 0
+    fi
+    if ip6tables -S 2>/dev/null | grep -qE '^-P INPUT (DROP|REJECT)'; then
+        printf '%s' "ip6tables INPUT 默认 DROP，需手动放行节点端口"
+        return 0
+    fi
+    printf '%s' "ip6tables 有规则，请确认已放行节点端口"
+}
+
+# 综合自检：打印诊断报告
+# 返回 0 = 可以用 IPv6 入口；1 = 不满足条件
+_ipv6_ingress_report() {
+    local cfg="${CONFIG_FILE:-${SINGBOX_DIR}/config.json}"
+    local nic6 egress dual fw ok=0
+    nic6="$(_nic_ipv6_preferred)"
+    egress="$(_ipv6_egress_ip)"
+
+    echo -e "  网卡公网 IPv6 : ${GREEN}${nic6:-无}${NC}"
+    echo -e "  出站 IPv6     : ${egress:-无}"
+    if [ -n "$nic6" ] && [ -n "$egress" ]; then
+        if [ "$nic6" = "$egress" ]; then
+            echo -e "  地址一致性    : ${GREEN}一致（原生 IPv6，可入站）${NC}"
+        else
+            echo -e "  地址一致性    : ${RED}不一致${NC} —— 出站走了隧道/中转，此地址不能用于入站"
+            ok=1
+        fi
+    elif [ -z "$nic6" ]; then
+        echo -e "  地址一致性    : ${RED}本机没有公网 IPv6${NC}"
+        ok=1
+    elif [ -z "$egress" ]; then
+        echo -e "  地址一致性    : ${YELLOW}无法探测出站 IPv6${NC} —— 不阻断，但请自行确认非隧道出口"
+    fi
+
+    if _ipv6_inbound_dualstack; then
+        echo -e "  入站监听      : ${GREEN}:: 双栈（IPv6 可连）${NC}"
+    else
+        echo -e "  入站监听      : ${RED}存在仅 IPv4 的 inbound${NC} —— 需把 listen 改成 :: 才能用 IPv6"
+        ok=1
+    fi
+
+    fw="$(_ipv6_firewall_note)"
+    echo -e "  IPv6 防火墙   : $fw"
+    case "$fw" in
+        *"全放行"*|*"未检测"*) ;;
+        *) echo -e "                  ${YELLOW}如连不上，先检查这条${NC}" ;;
+    esac
+    return $ok
+}
+
 # --- IPv6 (带缓存) ---
 ipv6_cache=""
 _get_ipv6() {
