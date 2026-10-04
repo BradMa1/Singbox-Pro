@@ -116,7 +116,11 @@ _ui_status_panel() {
     echo -e "  地区: ${YELLOW}${region}${NC} | ${host}"
     echo -e "  系统: ${os_info} | BBR: ${bbr} | CPU: ${cpu} | 内存: ${mem} | 磁盘: ${disk}"
     if [ -n "${SERVER_IP_OVERRIDE:-}" ]; then
-        echo -e "  IPv4: ${GREEN}${ip}${NC} ${YELLOW}(入口 IP 手动指定)${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+        if printf '%s' "$ip" | grep -q ':'; then
+            echo -e "  入口(IPv6): ${GREEN}${ip}${NC} ${YELLOW}(手动指定)${NC}  出站IPV6: ${GREEN}${ipv6}${NC}"
+        else
+            echo -e "  IPv4: ${GREEN}${ip}${NC} ${YELLOW}(入口 IP 手动指定)${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+        fi
     else
         echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
     fi
