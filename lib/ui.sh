@@ -153,9 +153,8 @@ _ui_main_menu() {
 
         echo -e "  ${CYAN}【进阶功能】${NC}"
         echo -e "    ${GREEN}[9]${NC} 中转管理          ${GREEN}[10]${NC} WARP 管理"
-        echo -e "    ${GREEN}[11]${NC} IPv6 优化        ${GREEN}[12]${NC} 流媒体 DNS"
+        echo -e "    ${GREEN}[11]${NC} IPv6 管理(出站+入口) ${GREEN}[12]${NC} 流媒体 DNS"
         echo -e "    ${GREEN}[13]${NC} 证书管理(ACME 真实证书)"
-        echo -e "    ${GREEN}[18]${NC} 入口 IP 设置(NAT/WARP 机器必看)"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
@@ -189,7 +188,6 @@ _ui_main_menu() {
             15) _ui_uninstall ;;
             16) _ui_health_check ;;
             17) _ui_upgrade_scripts ;;
-            18) _ui_server_ip_menu ;;
             0) echo "再见!"; exit 0 ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1321,32 +1319,50 @@ _ui_relay_menu() {
 }
 
 # ============================================================
-# IPv6 优化菜单
+# IPv6 管理（出站 DNS 优先级 + 入口 IP，原菜单 11 与 18 合并）
 # ============================================================
-
+# 两个独立概念，别搞混：
+#   出站 = sing-box 访问网站时 v4/v6 谁优先（解锁流媒体用）
+#   入口 = 节点链接里的服务器地址（客户端连哪个 IP；IPv4 被封时换 IPv6）
+# 注意: sb.sh 是 set -euo pipefail，所有命令替换赋值必须容忍失败（|| true），
+#       否则 grep 无匹配就会把整个面板退出 —— 菜单"进去就弹回 shell"就是这么来的。
 _ui_ipv6_menu() {
     while true; do
         clear
-        echo -e "${CYAN}=== IPv6 优化 ===${NC}"
+        echo -e "${CYAN}=== IPv6 管理 ===${NC}"
         echo ""
-        local nic_ip6
-        nic_ip6="$(_nic_ipv6_preferred 2>/dev/null)"
-        echo -e "  当前状态: $(_dns_ipv6_status)"
-        echo -e "  本机公网 IPv6: ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
+
+        local nic_ip nic_ip6 api_ip cur="${SERVER_IP_OVERRIDE:-}"
+        nic_ip=$( { ip -4 addr show scope global 2>/dev/null \
+                 | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
+                 | grep -oP 'inet \K[\d.]+' | head -1; } || true)
+        nic_ip6="$(_nic_ipv6_preferred 2>/dev/null || true)"
+        api_ip=$( { timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
+                 || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null; } || true)
+
+        echo -e "  网卡 IPv4    : ${nic_ip:-无}"
+        echo -e "  API 探测出口 : ${api_ip:-无}"
+        echo -e "  网卡 IPv6    : ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
+        echo -e "  出站优先     : $(_dns_ipv6_status)"
+        echo -e "  当前入口 IP  : ${GREEN}${cur:-（未设置 · 使用自动探测）}${NC}"
         echo ""
-        echo -e "  让 sing-box 出站连接优先使用 IPv6，有助于解锁流媒体。"
-        echo -e "  前提: VPS 必须有公网 IPv6 地址。"
+        echo -e "  ${CYAN}【出站】${NC} [1][2] 改的是${YELLOW}服务端访问网站${NC}时 v4/v6 谁优先，"
+        echo -e "  用于解锁流媒体，${RED}跟客户端怎么连进来无关${NC}。"
         echo ""
-        echo -e "  ${RED}别搞混${NC}：这里改的是「${YELLOW}服务端访问网站${NC}时优先用 IPv6」，"
-        echo -e "  跟「客户端用 IPv6 连进来」完全是两回事。"
-        echo -e "  若你是想解决节点连不上 / 延迟高，去主菜单 ${GREEN}[18] → [3]${NC} 换 IPv6 入口。"
+        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先（出站 · 解锁流媒体）"
+        echo -e "    ${GREEN}[2]${NC} 恢复 IPv4 优先（出站 · 默认）"
         echo ""
-        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先"
-        echo -e "    ${GREEN}[2]${NC} 恢复 IPv4 优先（默认）"
+        echo -e "  ${CYAN}【入口】${NC} 节点连不上 / 全部超时 / 延迟高得离谱时看这里："
+        echo -e "  网卡是内网(NAT)或探测到 WARP 出口 → [3] 手动填面板给的入口 IP；"
+        echo -e "  IPv4 链路被封锁 → [5] 一键切换 IPv6 入口（自动自检）。"
+        echo ""
+        echo -e "    ${GREEN}[3]${NC} 设置/修改入口 IP"
+        echo -e "    ${GREEN}[4]${NC} 清除入口 IP（恢复自动探测）"
+        echo -e "    ${GREEN}[5]${NC} 一键切换 IPv6 入口（自检后写入）"
         echo ""
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
-        read -p "  请输入选项 [0-2]: " choice
+        read -p "  请输入选项 [0-5]: " choice
 
         case $choice in
             1)
@@ -1356,55 +1372,9 @@ _ui_ipv6_menu() {
                     read -p "  仍要继续? [y/N]: " _v6y
                     [[ "$_v6y" =~ ^[Yy]$ ]] || { read -p "按回车继续..."; continue; }
                 fi
-                _dns_ipv6_enable; read -p "按回车继续..."; ;;
-            2) _dns_ipv6_disable; read -p "按回车继续..."; ;;
-            0) return ;;
-            *) _warn "无效选项" ; sleep 1 ;;
-        esac
-    done
-}
-
-# ============================================================
-# 入口 IP 设置 (NAT VPS / WARP 出站场景)
-# ============================================================
-# NAT LXC 或宿主机 WARP 出站的机器，脚本自动探测到的公网 IP 是「出口 IP」
-# （如 104.28.x.x），客户端连不进来，节点全部超时。此处把面板给出的真实
-# 入口 IP 持久化到 ${SERVER_IP_FILE}，之后所有节点生成都优先用它。
-_ui_server_ip_menu() {
-    while true; do
-        clear
-        echo -e "${CYAN}=== 入口 IP 设置 (NAT VPS) ===${NC}"
-        echo ""
-
-        local nic_ip api_ip cur="${SERVER_IP_OVERRIDE:-}"
-        nic_ip=$(ip -4 addr show scope global 2>/dev/null \
-                 | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
-                 | grep -oP 'inet \K[\d.]+' | head -1)
-        api_ip=$(timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
-                 || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null)
-
-        echo -e "  网卡 IPv4    : ${nic_ip:-无}"
-        echo -e "  API 探测出口 : ${api_ip:-无}"
-        echo -e "  网卡 IPv6    : $(_nic_ipv6_preferred 2>/dev/null || echo 无)"
-        echo -e "  当前入口 IP  : ${GREEN}${cur:-（未设置 · 使用自动探测）}${NC}"
-        echo ""
-        echo -e "  ${YELLOW}什么情况需要设${NC}: 网卡是 10.x/172.16-31.x/192.168.x 内网地址，"
-        echo -e "  或探测到的 IP 是 104.16-104.31.x / 2a09:bac1: 这类 WARP 出口段。"
-        echo -e "  这时请把服务商面板给出的真实入口 IP（端口映射 IP）填在这里。"
-        echo ""
-        echo -e "  ${YELLOW}IPv4 被封怎么办${NC}: 客户端连不上、或延迟高得离谱时，若本机有原生公网"
-        echo -e "  IPv6，用 ${GREEN}[3]${NC} 切换成 IPv6 入口即可绕开 IPv4 链路（实测可大幅降延迟）。"
-        echo ""
-        echo -e "    ${GREEN}[1]${NC} 设置/修改入口 IP"
-        echo -e "    ${GREEN}[2]${NC} 清除设置（恢复自动探测）"
-        echo -e "    ${GREEN}[3]${NC} 使用本机 IPv6 作为入口（IPv4 不通时试这个）"
-        echo ""
-        echo -e "    ${YELLOW}[0]${NC} 返回"
-        echo ""
-        read -p "  请输入选项 [0-3]: " choice
-
-        case $choice in
-            1)
+                _dns_ipv6_enable || true; read -p "按回车继续..."; ;;
+            2) _dns_ipv6_disable || true; read -p "按回车继续..."; ;;
+            3)
                 echo ""
                 read -p "  请输入入口 IP（或域名）: " new_ip
                 new_ip="$(printf '%s' "$new_ip" | tr -d '[:space:]')"
@@ -1421,19 +1391,19 @@ _ui_server_ip_menu() {
                 fi
                 read -p "按回车继续..."
                 ;;
-            2)
+            4)
                 rm -f "${SERVER_IP_FILE}" 2>/dev/null
                 export SERVER_IP_OVERRIDE=""
                 server_ip=""
                 _success "已清除，恢复自动探测"
                 read -p "按回车继续..."
                 ;;
-            3)
+            5)
                 clear
                 echo -e "${CYAN}=== 切换 IPv6 入口 · 自检 ===${NC}"
                 echo ""
                 local v6
-                v6="$(_nic_ipv6_preferred)"
+                v6="$(_nic_ipv6_preferred 2>/dev/null || true)"
                 if _ipv6_ingress_report; then
                     echo ""
                     read -p "  条件满足，是否使用 ${v6} 作为入口 IP? [y/N]: " yn

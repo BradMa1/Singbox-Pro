@@ -213,8 +213,9 @@ fi
 
 # 列出网卡上的公网 IPv6（排除 ULA fd/fc、链路本地 fe80、回环）
 # 输出格式: "<地址> static|dynamic"，static 才是稳定地址（dynamic 是 SLAAC/临时地址）
+# 注意: sb.sh 开 set -euo pipefail，管道任一环失败都会炸，尾部必须 || true
 _nic_ipv6_list() {
-    ip -6 addr show scope global 2>/dev/null | awk '
+    { ip -6 addr show scope global 2>/dev/null | awk '
         /^[0-9]+: / {
             iface = $2; sub(/:$/, "", iface)
             skip = (iface ~ /docker|br-|veth|wgcf|^lo$|tailscale|^zt|^tun|^wg/)
@@ -225,18 +226,21 @@ _nic_ipv6_list() {
             if (addr ~ /^(fd|fc|fe80)/ || addr == "::1") next
             kind = ($0 ~ /dynamic|temporary|mngtmpaddr/) ? "dynamic" : "static"
             print addr " " kind
-        }'
+        }'; } || true
 }
 
 # 优先返回静态 IPv6（无静态时退回第一个 dynamic）
 _nic_ipv6_preferred() {
     local list static any
     list="$(_nic_ipv6_list)"
-    [ -z "$list" ] && return 0
+    if [ -z "$list" ]; then
+        return 0
+    fi
     static="$(printf '%s\n' "$list" | awk '$2=="static"{print $1; exit}')"
     if [ -n "$static" ]; then printf '%s' "$static"; return 0; fi
     any="$(printf '%s\n' "$list" | awk 'NR==1{print $1}')"
     printf '%s' "$any"
+    return 0
 }
 
 # 出站 IPv6（带缓存）—— 与网卡地址不一致说明走了隧道，该地址不可用于入站
@@ -247,13 +251,18 @@ _ipv6_egress_ip() {
         printf '%s' "$_ipv6_egress_cache"; return 0
     fi
     local ip6
-    ip6=$(timeout 6 curl -s6 --max-time 4 ip.sb 2>/dev/null \
-       || timeout 6 curl -s6 --max-time 4 icanhazip.com 2>/dev/null \
-       || timeout 6 curl -s6 --max-time 4 ifconfig.me 2>/dev/null)
+    ip6=$(timeout 6 curl -s6 --max-time 4 ip.sb 2>/dev/null || true)
+    if [ -z "$ip6" ]; then
+        ip6=$(timeout 6 curl -s6 --max-time 4 icanhazip.com 2>/dev/null || true)
+    fi
+    if [ -z "$ip6" ]; then
+        ip6=$(timeout 6 curl -s6 --max-time 4 ifconfig.me 2>/dev/null || true)
+    fi
     ip6="$(printf '%s' "$ip6" | tr -d '[:space:]')"
     if [ -z "$ip6" ]; then _ipv6_egress_cache="NONE"; return 0; fi
     _ipv6_egress_cache="$ip6"
     printf '%s' "$ip6"
+    return 0
 }
 
 # 入站是否双栈监听：inbound 的 listen 为 "::" 或未设置才接受 IPv6 连接。
@@ -263,9 +272,12 @@ _ipv6_inbound_dualstack() {
     [ -f "$cfg" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
     local bad
-    bad=$(jq -r '.inbounds[]?.listen // "::"' "$cfg" 2>/dev/null \
-          | grep -v '^::[[:space:]]*$' | grep -v '^::$' | head -1)
-    [ -z "$bad" ]
+    bad=$( { jq -r '.inbounds[]?.listen // "::"' "$cfg" 2>/dev/null \
+          | grep -v '^::[[:space:]]*$' | grep -v '^::$' | head -1; } || true)
+    if [ -z "$bad" ]; then
+        return 0
+    fi
+    return 1
 }
 
 # IPv6 防火墙提示（不自动改规则，只提示）
@@ -276,7 +288,7 @@ _ipv6_firewall_note() {
         return 0
     fi
     local rules
-    rules=$(ip6tables -S 2>/dev/null | grep -vE '^-P (INPUT|FORWARD|OUTPUT) ACCEPT' | head -5)
+    rules=$( { ip6tables -S 2>/dev/null | grep -vE '^-P (INPUT|FORWARD|OUTPUT) ACCEPT' | head -5; } || true)
     if [ -z "$rules" ]; then
         printf '%s' "无 IPv6 防火墙规则（全放行）"
         return 0
@@ -286,6 +298,7 @@ _ipv6_firewall_note() {
         return 0
     fi
     printf '%s' "ip6tables 有规则，请确认已放行节点端口"
+    return 0
 }
 
 # 综合自检：打印诊断报告
