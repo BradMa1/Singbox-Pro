@@ -57,7 +57,7 @@ _relay_gen_token() {
                     fi
                     # 如果 metadata 里没有，从 inbound 的 reality.short_id 所在层级尝试取公钥字段
                     if [ -z "$pbk" ]; then
-                        pbk=$(echo "$tls" | jq -r '.reality.public_key // empty')
+                        pbk=$(echo "$tls" | jq -r '.reality.public_key // empty' || true)
                     fi
                     # 在 reality 对象中注入 public_key
                     if [ -n "$pbk" ]; then

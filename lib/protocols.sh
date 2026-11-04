@@ -595,8 +595,12 @@ _proto_generate_cert() {
     # 不能带 insecure=1 (TUIC 带会触发小火箭 v4 回退 bug; VMess 标准格式不支持),
     # 只能靠证书 SAN 覆盖连接用的公网 IP 才能握手通过。仅含 127.0.0.1 会导致这两个协议失败。
     local pub_ip=""
-    pub_ip=$(curl -s --max-time 8 icanhazip.com 2>/dev/null)
-    [ -z "$pub_ip" ] && pub_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    pub_ip=$(curl -s --max-time 8 icanhazip.com 2>/dev/null || true)
+    # 只接受合法 IPv4/IPv6 字面量: curl 失败时可能把错误文本写进 stdout, 塞进证书 SAN 会导致 openssl 报错
+    case "$pub_ip" in
+        *[!0-9a-fA-F:.]*|"") pub_ip="" ;;
+    esac
+    [ -z "$pub_ip" ] && pub_ip=$( { hostname -I 2>/dev/null | awk '{print $1}'; } || true)
     local san="DNS:sing-box-pro,DNS:localhost,IP:127.0.0.1"
     [ -n "$pub_ip" ] && san="${san},IP:${pub_ip}"
     openssl req -x509 -newkey rsa:2048 -keyout "${cert_dir}/key.pem" \

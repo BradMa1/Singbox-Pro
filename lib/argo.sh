@@ -117,7 +117,7 @@ _argo_start_systemd_temp() {
     local domain=""
     for i in $(seq 1 20); do
         sleep 1
-        domain=$(journalctl -u "argo-tunnel@${port}" -n 60 --no-pager 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -1)
+        domain=$( { journalctl -u "argo-tunnel@${port}" -n 60 --no-pager 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -1; } || true)
         [ -n "$domain" ] && break
         [ "$((i % 3))" -eq 0 ] && _info "等待隧道就绪... (${i}s)"
     done
@@ -147,7 +147,7 @@ _argo_start_nohup_temp() {
     for i in $(seq 1 15); do
         sleep 1
         if [ -f "$log_file" ]; then
-            domain=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$log_file" | tail -1)
+            domain=$( { grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$log_file" | tail -1; } || true)
             [ -n "$domain" ] && break
         fi
         [ "$((i % 3))" -eq 0 ] && _info "等待隧道就绪... (${i}s)"

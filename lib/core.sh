@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.5"
+export PROJECT_VERSION_FALLBACK="2.2.6"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
@@ -166,12 +166,12 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
         fi
 
         # 网卡无公网 IP → API 查询
-        ip=$(timeout 5 curl -s4 --max-time 2 icanhazip.com 2>/dev/null || \
+        ip=$( { timeout 5 curl -s4 --max-time 2 icanhazip.com 2>/dev/null || \
              timeout 5 curl -s4 --max-time 2 ipinfo.io/ip 2>/dev/null || \
              timeout 5 curl -s4 --max-time 2 ifconfig.me 2>/dev/null || \
-             timeout 5 curl -s4 --max-time 2 ip.sb 2>/dev/null)
-        [ -z "$ip" ] && ip=$(timeout 5 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
-                              timeout 5 curl -s6 --max-time 2 ipinfo.io/ip 2>/dev/null)
+             timeout 5 curl -s4 --max-time 2 ip.sb 2>/dev/null; } || true)
+        [ -z "$ip" ] && ip=$( { timeout 5 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
+                              timeout 5 curl -s6 --max-time 2 ipinfo.io/ip 2>/dev/null; } || true)
         # 网卡是内网 + 探测到 WARP/CDN 出口 IP → 几乎可以肯定不是可入站的入口 IP
         # （常见于 NAT LXC / 宿主机 WARP 出站，节点会全部连接超时）
         if _is_warp_or_cdn_ip "$ip"; then
@@ -346,9 +346,9 @@ ipv6_cache=""
 _get_ipv6() {
     [ -n "$ipv6_cache" ] && [ "$ipv6_cache" != "null" ] && { echo "$ipv6_cache"; return; }
     local ip6
-    ip6=$(timeout 3 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
+    ip6=$( { timeout 3 curl -s6 --max-time 2 icanhazip.com 2>/dev/null || \
           timeout 3 curl -s6 --max-time 2 ifconfig.me 2>/dev/null || \
-          timeout 3 curl -s6 --max-time 2 ipv6.icanhazip.com 2>/dev/null)
+          timeout 3 curl -s6 --max-time 2 ipv6.icanhazip.com 2>/dev/null; } || true)
     [ -z "$ip6" ] && ipv6_cache="无" || ipv6_cache="$ip6"
     echo "$ipv6_cache"
 }

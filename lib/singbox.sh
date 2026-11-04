@@ -554,9 +554,9 @@ _sb_check_core_update() {
     local latest=""
     local api="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
     if [ -n "${GH_PROXY:-}" ]; then
-        latest=$(curl -fsSL --connect-timeout 10 "${GH_PROXY%/}/${api#https://}" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
+        latest=$( { curl -fsSL --connect-timeout 10 "${GH_PROXY%/}/${api#https://}" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//'; } || true)
     fi
-    [ -z "$latest" ] && latest=$(curl -fsSL --connect-timeout 10 "$api" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
+    [ -z "$latest" ] && latest=$( { curl -fsSL --connect-timeout 10 "$api" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//'; } || true)
     [ -z "$latest" ] && { _warn "无法获取最新版本（网络/API 限制，可稍后重试）"; return 1; }
 
     if [ "$cur" = "$latest" ]; then
@@ -798,6 +798,9 @@ _sb_upgrade_scripts() {
 
     echo -e "  当前版本: ${SCRIPT_VERSION:-${PROJECT_VERSION}}"
     echo -e "  最新版本: ${remote_ver}"
+    if [ "$remote_ver" = "${SCRIPT_VERSION:-${PROJECT_VERSION}}" ]; then
+        echo -e "  ${YELLOW}版本号相同，但仍会覆盖刷新全部代码文件（修复不一定改版本号）${NC}"
+    fi
     echo ""
 
     # git 部署优先: install.sh 现在默认 git clone 部署 (github → VPS),

@@ -457,6 +457,21 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.6 (2026-11-04)
+**稳定性(修复 9 处 `set -e` 导致的静默闪退) — 重要**
+- **背景**：`sb.sh` 使用 `set -euo pipefail`，一条失败的命令会让整个面板无声退出。凡是「命令替换赋值」里带 `curl` / `jq` / `grep` / `openssl` 的，失败即杀进程。
+- **修复清单**：
+  - `argo.sh`：等临时隧道域名时 `grep` 无匹配（隧道刚启动时必然发生）→ 闪退
+  - `argo.sh`：从日志文件取域名同样加固
+  - `singbox.sh`：查 sing-box 最新版本时 `curl` 失败 → 闪退，走不到 fallback 分支
+  - `singbox.sh`：升级时版本号相同给出明确提示（仍会覆盖刷新，不是"无需更新"）
+  - `cert.sh`：`openssl` 读证书过期时间失败 → 闪退
+  - `relay.sh`：`jq` 解析 reality 公钥失败 → 闪退
+  - `protocols.sh`：生成自签证书取公网 IP 时 `curl` 8s 超时 → 闪退（下一行的 `hostname -I` 兜底永远走不到）
+  - `core.sh`：`_get_public_ip` / `_get_ipv6` 全部探测源失败时不再触发退出
+  - `protocols.sh`：`pub_ip` 增加 IPv4/IPv6 字面量校验，避免把 curl 错误文本写进证书 SAN
+- **版本号**：`PROJECT_VERSION_FALLBACK` 2.2.5 → 2.2.6；此前 39 个提交未打 tag，banner 一直显示 2.2.5（banner 版本取自 `git describe`），这是"看起来一直没更新"的原因。
+
 ### 2026-10-04 (v2.2.5+)
 **修复(启动崩循环导致节点全部 -1) — 重要**
 - **现象**：HK 机器 5 个节点全 -1，`ss -tlnp` 无监听，`systemctl` 日志 `restart counter is at 2054`。
