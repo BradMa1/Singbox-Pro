@@ -457,6 +457,12 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.7 (2026-11-05)
+**安装路径加固**
+- **`install.sh` 模块清单改为单一数据源**：不再手工维护第二份白名单，改为从刚下载的 `sb.sh` 的 `_SB_LIB_MODULES` 解析；解析失败（如 `sb.sh` 下载失败）自动回退内置清单，保证裸安装仍可继续。
+  历史上曾因白名单漏加 `cert.sh`，导致安装后启动即缺模块。
+- **`install.sh` 版本号同步**：`SCRIPT_VERSION` 之前停留在 `2.2.5`，会让首装用户误以为装到旧版。
+
 ### v2.2.6 (2026-11-04)
 **稳定性(修复 9 处 `set -e` 导致的静默闪退) — 重要**
 - **背景**：`sb.sh` 使用 `set -euo pipefail`，一条失败的命令会让整个面板无声退出。凡是「命令替换赋值」里带 `curl` / `jq` / `grep` / `openssl` 的，失败即杀进程。

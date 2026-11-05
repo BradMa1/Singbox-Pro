@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.2.5"
+export SCRIPT_VERSION="2.2.7"
 # PROJECT_VERSION(SSOT) 由 lib/core.sh 定义；若已下载 lib 则提前 source 以获取真实版本号，
 # 否则用上面的兜底字面量（首次 curl 管道安装、lib 尚未下载的场景）。
 
@@ -346,8 +346,23 @@ _step_scripts() {
         _err "sb.sh 下载失败"
     fi
 
-    # 下载模块 (与 sb.sh 的 _SB_LIB_MODULES 保持一致, 新增模块需同步)
-    local modules=("core.sh" "singbox.sh" "protocols.sh" "cert.sh" "argo.sh" "warp.sh" "relay.sh" "ui.sh")
+    # 下载模块: 清单从刚下载的 sb.sh 里的 _SB_LIB_MODULES 解析 (单一数据源),
+    # 新增模块只需改 sb.sh 一处, 不再手工维护第二份白名单
+    # (曾因白名单漏加 cert.sh 导致安装/升级后启动即缺模块)
+    local modules=()
+    if [ -f "$SB_SCRIPT" ]; then
+        while IFS= read -r _mod; do
+            if [ -n "$_mod" ]; then
+                modules+=("$_mod")
+            fi
+        done < <(sed -n '/^_SB_LIB_MODULES=(/,/^)/p' "$SB_SCRIPT" 2>/dev/null \
+                 | grep -oE '"[A-Za-z0-9_.-]+\.sh"' | tr -d '"' || true)
+    fi
+    # 解析不到(如 sb.sh 下载失败)时回退内置清单, 保证裸安装仍能继续
+    if [ "${#modules[@]}" -eq 0 ]; then
+        _warn "未能从 sb.sh 解析模块清单, 使用内置清单"
+        modules=("core.sh" "singbox.sh" "protocols.sh" "cert.sh" "argo.sh" "warp.sh" "relay.sh" "ui.sh")
+    fi
     for mod in "${modules[@]}"; do
         if _dl_with_fallback "${REPO_RAW}/lib/${mod}" "${LIB_DIR}/${mod}" "lib/${mod}"; then
             echo -e "  ${GREEN}√${NC} lib/${mod}"

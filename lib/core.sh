@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.6"
+export PROJECT_VERSION_FALLBACK="2.2.7"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
