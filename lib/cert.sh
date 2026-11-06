@@ -49,7 +49,7 @@ _cert_acme_install() {
     local ok=0 log="/tmp/acme_install.log" tmp
 
     # 1) 官方一键脚本 (get.acme.sh 内部自带回 github 下载)
-    if curl -fsSL https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
+    if curl -fsSL --connect-timeout 15 --max-time 120 https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
         chmod +x /tmp/acme_install.sh
         if /tmp/acme_install.sh >"$log" 2>&1; then
             ok=1
@@ -64,7 +64,7 @@ _cert_acme_install() {
     # 2) get.acme.sh 经 ghproxy 镜像 (github 直连失败时)
     if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
         _warn "回退: get.acme.sh 经 ghproxy 镜像..."
-        if curl -fsSL https://ghproxy.com/https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
+        if curl -fsSL --connect-timeout 15 --max-time 120 "${GH_PROXY:-https://ghproxy.net/}https://get.acme.sh" -o /tmp/acme_install.sh 2>"$log"; then
             chmod +x /tmp/acme_install.sh
             if /tmp/acme_install.sh >"$log" 2>&1; then
                 ok=1
@@ -93,7 +93,7 @@ _cert_acme_install() {
     if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ] && command -v git >/dev/null 2>&1; then
         _warn "回退: git clone 经 ghproxy 镜像..."
         tmp=$(mktemp -d)
-        if git clone --depth 1 https://ghproxy.com/https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
+        if git clone --depth 1 "${GH_PROXY:-https://ghproxy.net/}https://github.com/acmesh-official/acme.sh.git" "$tmp/acme.sh" >"$log" 2>&1; then
             (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1 || _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"
         else
             _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"

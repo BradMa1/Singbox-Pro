@@ -2464,12 +2464,24 @@ _ui_uninstall() {
     done
 
     # --- 6. 删除文件 ---
+    # 判空保护: 这几个变量来自 core.sh, 一旦为空/被改成 "/" 就会删到系统目录
+    _safe_rm_tree() {
+        local d="${1:-}"
+        case "$d" in
+            ""|"/"|"/etc"|"/usr"|"/usr/local"|"/var"|"/root"|"/home")
+                _warn "跳过可疑路径: '${d}'（可能误删系统目录）"
+                return 1
+                ;;
+        esac
+        [ -d "$d" ] || return 0
+        rm -rf "$d"
+    }
     rm -f "$SINGBOX_BIN"
     rm -f "$CLOUDFLARED_BIN"
     rm -f "$WARP_BIN"
-    rm -rf "$SINGBOX_DIR"
-    rm -rf "$WARP_DIR"
-    rm -rf "$RELAY_CONFIG_DIR"
+    _safe_rm_tree "$SINGBOX_DIR" || true
+    _safe_rm_tree "$WARP_DIR" || true
+    _safe_rm_tree "$RELAY_CONFIG_DIR" || true
 
     # 清理临时文件
     rm -f /tmp/singbox_argo_*.pid /tmp/singbox_argo_*.log /tmp/singbox_argo_fixed_*.pid /tmp/singbox_argo_fixed_*.log

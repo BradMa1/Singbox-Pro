@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.7"
+export PROJECT_VERSION_FALLBACK="2.2.8"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
@@ -158,7 +158,11 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
         fi
 
         # 从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
-        ip=$(ip -4 addr show scope global 2>/dev/null | grep -v 'docker\|br-\|veth\|wgcf\|lo' | grep -oP 'inet \K[\d.]+' | head -1)
+        # 注意: 纯 IPv6 机器/无 ip 命令时 grep 会返回非零, pipefail+set -e 会把
+        # 整个面板带走, 因此必须兜住（与 _nic_ipv6_* 系列同一类加固）
+        ip=$( { ip -4 addr show scope global 2>/dev/null \
+                | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
+                | grep -oP 'inet \K[\d.]+' | head -1; } || true)
         if [ -n "$ip" ] && ! echo "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.)'; then
             server_ip="$ip"
             echo "$ip"

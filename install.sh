@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-export SCRIPT_VERSION="2.2.7"
+export SCRIPT_VERSION="2.2.8"
 # PROJECT_VERSION(SSOT) 由 lib/core.sh 定义；若已下载 lib 则提前 source 以获取真实版本号，
 # 否则用上面的兜底字面量（首次 curl 管道安装、lib 尚未下载的场景）。
 
@@ -465,10 +465,19 @@ EOF
 
         # 启动并验证；systemd 不可用时（容器未运行 systemd）回退 nohup
         _info "正在启动 sing-box..."
-        if systemctl restart sing-box 2>/dev/null && systemctl is-active --quiet sing-box 2>/dev/null; then
+        install_started=0
+        if systemctl restart sing-box 2>/dev/null; then
+            # 优先用「端口真的在监听」判定；只看 is-active 会在崩溃循环间隙误判成功
+            if declare -f _sb_wait_healthy >/dev/null 2>&1; then
+                _sb_wait_healthy 15 && install_started=1
+            elif systemctl is-active --quiet sing-box 2>/dev/null; then
+                install_started=1
+            fi
+        fi
+        if [ "$install_started" -eq 1 ]; then
             _ok "sing-box 服务已启动"
         else
-            _warn "systemd 启动失败（容器可能未运行 systemd），回退 nohup 直接拉起..."
+            _warn "systemd 启动失败或端口未监听（容器可能未运行 systemd），回退 nohup 直接拉起..."
             _sb_manage_nohup "restart"
             sleep 2
             if [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then
@@ -490,7 +499,12 @@ SVCALPINE
         chmod +x /etc/init.d/sing-box
         rc-update add sing-box default >/dev/null 2>&1
         rc-service sing-box restart 2>/dev/null || true
-        _ok "sing-box OpenRC 服务已设置"
+        # 原来无条件报「已设置」，即使服务没起来也一样。这里确认一下真实状态
+        if rc-service sing-box status 2>/dev/null | grep -q 'started'; then
+            _ok "sing-box OpenRC 服务已启动"
+        else
+            _warn "sing-box OpenRC 服务未启动，请检查: cat /var/log/sing-box.log"
+        fi
 
     else
         # 无 systemd / openrc（常见面板/虚拟化容器）：用 nohup 直接拉起

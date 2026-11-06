@@ -359,6 +359,79 @@ _sb_localize_rule_sets() {
     fi
 }
 
+# --- 上次验证可用的配置快照（重启失败时用于自动回滚）---
+LAST_GOOD_CONFIG="${CONFIG_FILE}.lastgood"
+
+# --- 统计 sing-box 实际监听的端口数；没有 ss/netstat 时输出为空 ---
+_sb_count_listen_ports() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -tulnp 2>/dev/null | grep -c 'sing-box' || true
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tulnp 2>/dev/null | grep -c 'sing-box' || true
+    fi
+}
+
+# --- nohup 模式进程是否存活 ---
+_sb_nohup_alive() {
+    local pid_file="/run/sing-box.pid"
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# --- 单次健康判定：进程活着 + 端口真的在监听 ---
+# 只看 is-active 不够：systemd Restart=always 在崩溃重启的间隙里仍可能返回
+# active，而实际没有任何端口在监听（曾因此误判「服务正常」，节点全 -1）。
+_sb_is_healthy_now() {
+    [ -z "${INIT_SYSTEM:-}" ] && _detect_init_system
+    case "$INIT_SYSTEM" in
+        systemd) systemctl is-active --quiet sing-box 2>/dev/null || return 1 ;;
+        openrc)  rc-service sing-box status 2>/dev/null | grep -q 'started' || return 1 ;;
+        nohup)   _sb_nohup_alive || return 1 ;;
+        *)       return 1 ;;
+    esac
+    local ports
+    ports="$(_sb_count_listen_ports)"
+    # 空 = 系统里没有 ss/netstat，只能信进程状态；有工具却 0 端口 = 没起来
+    [ -z "$ports" ] || [ "$ports" -gt 0 ]
+}
+
+# --- 等待服务真正可用（最多 $1 秒）---
+_sb_wait_healthy() {
+    local timeout="${1:-15}" i=0 start_restarts="" restarts=""
+    if [ "${INIT_SYSTEM:-}" = "systemd" ]; then
+        start_restarts="$(systemctl show sing-box -p NRestarts --value 2>/dev/null || true)"
+    fi
+    while [ "$i" -lt "$timeout" ]; do
+        sleep 1
+        i=$((i + 1))
+        # 崩溃循环检测：等待期间重启计数还在涨，说明配置一启动就挂，不必等满超时
+        if [ "${INIT_SYSTEM:-}" = "systemd" ] && [ -n "$start_restarts" ]; then
+            restarts="$(systemctl show sing-box -p NRestarts --value 2>/dev/null || true)"
+            if [ -n "$restarts" ] && [ "$restarts" -gt "$start_restarts" ] 2>/dev/null; then
+                return 1
+            fi
+        fi
+        if _sb_is_healthy_now; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# --- 失败时打印最后几行日志（只取 5 行，避免刷屏）---
+_sb_show_failure_hint() {
+    local lines=""
+    if [ "${INIT_SYSTEM:-}" = "systemd" ]; then
+        lines="$(journalctl -u sing-box -n 5 --no-pager 2>/dev/null | tail -5 || true)"
+        [ -n "$lines" ] && echo "$lines" | sed 's/^/    /'
+        _warn "完整日志: journalctl -u sing-box -n 50 --no-pager"
+    else
+        [ -f /var/log/sing-box.log ] && tail -5 /var/log/sing-box.log | sed 's/^/    /'
+        _warn "完整日志: tail -50 /var/log/sing-box.log"
+    fi
+}
+
 # --- 重启服务并验证 ---
 _sb_restart_and_verify() {
     _sb_fix_legacy_dns "$CONFIG_FILE"
@@ -386,28 +459,39 @@ _sb_restart_and_verify() {
     fi
 
     _manage_service "restart"
-    sleep 2
 
-    if [ "$INIT_SYSTEM" == "systemd" ]; then
-        if systemctl is-active --quiet sing-box 2>/dev/null; then
+    if _sb_wait_healthy 15; then
+        # 只有真正验证通过才记为「上次可用」，避免把坏配置当基准
+        cp -f "$CONFIG_FILE" "$LAST_GOOD_CONFIG" 2>/dev/null || true
+        chmod 600 "$LAST_GOOD_CONFIG" 2>/dev/null || true
+        local port_n
+        port_n="$(_sb_count_listen_ports)"
+        if [ -n "$port_n" ] && [ "$port_n" -gt 0 ] 2>/dev/null; then
+            _success "sing-box 服务运行正常（${port_n} 个端口在监听）"
+        else
             _success "sing-box 服务运行正常"
-            return 0
         fi
-        _error "sing-box 启动失败，请检查日志: journalctl -u sing-box -n 30"
-    elif [ "$INIT_SYSTEM" == "openrc" ]; then
-        if rc-service sing-box status 2>/dev/null | grep -q "started"; then
-            _success "sing-box 服务运行正常"
-            return 0
+        return 0
+    fi
+
+    _error "sing-box 重启后 15 秒内未能正常监听端口（启动失败或崩溃循环）"
+    _sb_show_failure_hint
+
+    # 自动回滚：本次改动把服务搞挂了，恢复上次验证可用的配置
+    if [ -f "$LAST_GOOD_CONFIG" ] && ! cmp -s "$LAST_GOOD_CONFIG" "$CONFIG_FILE" 2>/dev/null; then
+        local failed_cfg="${CONFIG_FILE}.failed.$(date +%Y%m%d_%H%M%S)"
+        cp -f "$CONFIG_FILE" "$failed_cfg" 2>/dev/null || true
+        _warn "已自动回滚到上次可用配置（出问题的配置留档: $(basename "$failed_cfg")）"
+        cp -f "$LAST_GOOD_CONFIG" "$CONFIG_FILE" 2>/dev/null || true
+        _manage_service "restart"
+        if _sb_wait_healthy 15; then
+            _success "回滚成功，服务已恢复（本次改动的配置未生效）"
+        else
+            _error "回滚后服务仍未恢复，需要手工介入"
+            _sb_show_failure_hint
         fi
-        _error "sing-box 启动失败，请检查日志: cat /var/log/sing-box.log"
     else
-        # nohup 模式：检查进程是否存活
-        local pid_file="/run/sing-box.pid"
-        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
-            _success "sing-box 服务运行正常 (nohup, PID $(cat "$pid_file"))"
-            return 0
-        fi
-        _error "sing-box 启动失败，请检查日志: cat /var/log/sing-box.log"
+        _warn "没有可用的历史配置快照，无法自动回滚；请按上面的日志排查"
     fi
     return 1
 }
@@ -615,6 +699,27 @@ _sb_backup_config() {
     local backup="${CONFIG_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
     cp "$CONFIG_FILE" "$backup"
     _info "配置已备份到: $backup"
+    _sb_prune_config_backups
+}
+
+# --- 备份轮转：只保留最近 N 份，避免长期使用后堆几百个小文件 ---
+# 注意: 函数必须恒返回 0 —— 它被 _sb_backup_config 末行调用，
+# 在 set -e 下返回非零会把整个面板带走。
+_sb_prune_glob() {
+    local prefix="$1" keep="${2:-10}" olds=""
+    olds="$( { ls -1t "${prefix}"* 2>/dev/null || true; } | tail -n +$((keep + 1)) || true)"
+    if [ -n "$olds" ]; then
+        printf '%s\n' "$olds" | while IFS= read -r f; do
+            if [ -n "$f" ]; then rm -f "$f" 2>/dev/null || true; fi
+        done
+    fi
+    return 0
+}
+
+_sb_prune_config_backups() {
+    _sb_prune_glob "${CONFIG_FILE}.backup." 10
+    _sb_prune_glob "${CONFIG_FILE}.failed." 5
+    return 0
 }
 
 # ============================================================

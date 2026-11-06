@@ -622,15 +622,12 @@ _sb_renew_cert() {
     _info "重生成 TLS 证书（SAN 将包含公网 IP）..."
     _proto_generate_cert force || return 1
     _info "重启 sing-box 使新证书生效..."
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl restart sing-box 2>/dev/null && sleep 2
-    elif command -v service >/dev/null 2>&1; then
-        service sing-box restart 2>/dev/null && sleep 2
-    fi
-    if systemctl is-active --quiet sing-box 2>/dev/null; then
-        _success "sing-box 已重启，新证书生效"
-    else
-        _warn "无法确认 sing-box 状态，请手动检查: systemctl status sing-box"
+    # 统一走服务管理（systemd / OpenRC / nohup 都能覆盖）。
+    # 原实现硬编码 systemctl，Alpine(OpenRC) 上换了证书但服务没重启，新证书永不生效。
+    if declare -f _sb_restart_and_verify >/dev/null 2>&1; then
+        _sb_restart_and_verify || _warn "重启未通过验证，请手动检查服务状态"
+    elif declare -f _manage_service >/dev/null 2>&1; then
+        _manage_service "restart" >/dev/null 2>&1 || true
     fi
     # 自动打印 VMess 新链接(标准 vmess:// + v2rayN 完整 Xray 配置), 用户直接复制重导
     # 这样证书重生成 → VMess pin 更新 一站式完成, 避免因旧 pin 导致 TLS 失败

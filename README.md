@@ -457,6 +457,19 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.8 (2026-11-06)
+**服务健康判定 + 自动回滚（修「面板说正常、节点全 -1」的误判）**
+- **重启后改为验证「端口真的在监听」**：原来只 `systemctl is-active`，而 `Restart=always` 在崩溃重启的间隙里仍可能返回 active，实际一个端口都没有（2026-10-03 的香港机器就是这样，误判「服务正常」排查了很久）。现在要求「进程在 + 端口数 > 0」双条件，并检测 `NRestarts` 增长直接判定崩溃循环（1 秒内失败，不必等满 15 秒）。
+- **重启失败自动回滚**：每次验证通过才把配置记为 `config.json.lastgood`；下次改坏导致重启后不健康，自动把坏配置留档成 `config.json.failed.<时间戳>` 并回滚，再重启验证一次。
+- **备份轮转**：`config.json.backup.*` 只保留最近 10 份、`.failed.*` 保留 5 份，长期使用不再堆几百个小文件。
+- **卸载加判空保护**：`rm -rf` 前检查目录变量，为空或是 `/` `/etc` `/usr` 等系统目录时直接跳过。
+
+**其他修复**
+- `protocols.sh`：重生成证书后重启走统一服务管理，修掉硬编码 `systemctl` —— Alpine（OpenRC）上原来换了证书但服务没重启，新证书永不生效。
+- `core.sh`：`_get_public_ip` 里网卡 IP 取值的管道补上兜底，纯 IPv6 机器 / 无 `ip` 命令时不再因 `pipefail + set -e` 把面板带走。
+- `cert.sh`：acme.sh 下载补 `--connect-timeout 15 --max-time 120`（原来网络卡住会无限等待）；镜像从已停服的 `ghproxy.com` 改为与其他模块一致的 `${GH_PROXY:-https://ghproxy.net/}`。
+- `install.sh`：首装启动验证同样改为「端口在监听」判定；OpenRC 分支不再无条件报「已设置」，服务没起来会明确告警。
+
 ### v2.2.7 (2026-11-05)
 **安装路径加固**
 - **`install.sh` 模块清单改为单一数据源**：不再手工维护第二份白名单，改为从刚下载的 `sb.sh` 的 `_SB_LIB_MODULES` 解析；解析失败（如 `sb.sh` 下载失败）自动回退内置清单，保证裸安装仍可继续。
