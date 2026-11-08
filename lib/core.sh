@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.9"
+export PROJECT_VERSION_FALLBACK="2.2.10"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
@@ -185,18 +185,18 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
         # （常见于 NAT LXC / 宿主机 WARP 出站，节点会全部连接超时）
         if [ -z "$ip" ]; then
             _warn "未能探测到公网 IP（无外网出口或探测接口被墙），节点链接里的地址会是空的。"
-            _warn "请在主菜单 [11] IPv6 管理 → [3] 手动指定入口 IP / 域名。"
+            _warn "菜单 [11] 入口 IP/出站 → [1]：手动填面板给的入口 IP 或域名。"
         elif _is_private_ip "$ip"; then
             # 内网 / CGNAT 地址在公网上不可达，用它生成节点 = 客户端全部超时
             _warn "探测到的地址 ${ip} 属于内网 / 运营商 NAT(CGNAT) 段，外部连不进来。"
-            _warn "请在主菜单 [11] IPv6 管理 → [3] 填入面板给出的入口 IP 或域名。"
+            _warn "菜单 [11] 入口 IP/出站 → [1]：填面板给的入口 IP 或域名。"
         elif _is_warp_or_cdn_ip "$ip"; then
             _warn "探测到的公网 IP ${ip} 属于 Cloudflare WARP 出口段，很可能无法入站连接。"
-            _warn "NAT/LXC 机器请在主菜单 [11] IPv6 管理 → [3] 手动填写面板给出的真实入口 IP。"
+            _warn "NAT/LXC 机器：菜单 [11] 入口 IP/出站 → [1] 填面板给的真实入口 IP。"
         elif [ -n "$nic_private" ]; then
             # NAT 机器：出口 IP 不等于入口 IP（面板给的映射地址可能完全不同）
             _warn "本机网卡是内网地址（NAT 环境），入口地址取自出口探测 ${ip}，两者不一定相同。"
-            _warn "若节点连不上，请在主菜单 [11] IPv6 管理 → [3] 填面板给出的入口 IP / 域名。"
+            _warn "连不上就去 菜单 [11] 入口 IP/出站 → [1] 填面板给的入口 IP / 域名。"
         fi
         server_ip="$ip"
         echo "$ip"
@@ -668,7 +668,7 @@ export SERVER_DOMAIN="${SERVER_DOMAIN:-}"
 # NAT/LXC 容器、或出站走 WARP 的机器，公网 API 探测到的是「出口 IP」，
 # 与服务商面板分配的「入口 IP / 端口映射 IP」不同，用它生成节点会全部连接超时。
 # 优先级: 环境变量 SERVER_IP_OVERRIDE > 持久化文件 ${SINGBOX_DIR}/.server_ip > 自动探测
-# 菜单入口: sb 主菜单 [18] 入口 IP 设置
+# 菜单入口: sb 主菜单 [11] 入口 IP/出站 → [1] 设置/修改入口 IP
 export SERVER_IP_FILE="${SERVER_IP_FILE:-${SINGBOX_DIR}/.server_ip}"
 if [ -z "${SERVER_IP_OVERRIDE:-}" ] && [ -f "${SERVER_IP_FILE}" ]; then
     SERVER_IP_OVERRIDE="$(cat "${SERVER_IP_FILE}" 2>/dev/null | tr -d '[:space:]')"

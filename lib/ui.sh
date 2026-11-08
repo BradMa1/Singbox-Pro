@@ -137,7 +137,7 @@ _ui_status_panel() {
         # 自动探测到内网/CGNAT 地址 = 用它生成的节点外部一定连不上（NAT VPS 常见）
         if _is_private_ip "$ip"; then
             echo -e "  ${RED}⚠ 入口地址 ${ip} 是内网/CGNAT，外部连不进来${NC}"
-            echo -e "  ${YELLOW}  → 菜单 [11] → [3] 填入面板给的入口 IP 或域名${NC}"
+            echo -e "  ${YELLOW}  → 菜单 [11] → [1] 填入面板给的入口 IP 或域名${NC}"
         fi
     fi
     echo ""
@@ -171,15 +171,15 @@ _ui_main_menu() {
         # 左列按「标签+名称」整体对齐: 标签宽度不同([9] 3 宽 / [11] 4 宽)，
         # 不能只 pad 名称，否则两行右列会错位(曾把 [12] 挤到 [11] 后面)
         _ui_two_col "[9]"  "中转管理"   "[10]" "WARP 管理" 28
-        _ui_two_col "[11]" "IPv6 管理"  "[12]" "流媒体 DNS" 28
+        _ui_two_col "[11]" "入口 IP/出站"  "[12]" "流媒体 DNS" 28
         echo -e "    ${GREEN}[13]${NC} 证书管理 (ACME 真实证书)"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
-        # 左列目标显示宽度=34 (含 [N] 标签 4 宽 + 标签后 1 空格 + 菜单名 + 提示括号)
-        local M=34
-        echo -e "    ${GREEN}[14]${NC} $(_str_pad_cjk "安装/更新核心(sing-box 内核)" $M)${RED}[15]${NC} 卸载脚本(清理所有配置)"
-        echo -e "    ${GREEN}[16]${NC} $(_str_pad_cjk "健康检查(端口/配置/服务诊断)" $M)${GREEN}[17]${NC} 升级脚本(lib 模块+sb.sh)"
+        # 与其他区块统一到同一列(显示列 50)。原来这里单独用 34 宽 hardcode，
+        # 右列比上面三块右移 11 列，看着像错位；文案顺带精简，细节在各子菜单里。
+        _ui_two_col "[14]" "更新核心(sing-box)"  "[15]" "卸载脚本(清空配置)" 28
+        _ui_two_col "[16]" "健康检查(端口/配置)"  "[17]" "升级脚本(拉取最新)" 28
         echo ""
 
         echo -e "  ─────────────────────────────────────────────────"
@@ -1337,17 +1337,19 @@ _ui_relay_menu() {
 }
 
 # ============================================================
-# IPv6 管理（出站 DNS 优先级 + 入口 IP，原菜单 11 与 18 合并）
+# 入口 IP 与出站优先级（原「IPv6 管理」，原菜单 11 与 18 合并）
 # ============================================================
-# 两个独立概念，别搞混：
-#   出站 = sing-box 访问网站时 v4/v6 谁优先（解锁流媒体用）
+# 这个菜单里其实是两件互不相干的事，名字里只写 IPv6 会让人找不到入口设置：
 #   入口 = 节点链接里的服务器地址（客户端连哪个 IP；IPv4 被封时换 IPv6）
+#   出站 = sing-box 访问网站时 v4/v6 谁优先（解锁流媒体用）
 # 注意: sb.sh 是 set -euo pipefail，所有命令替换赋值必须容忍失败（|| true），
 #       否则 grep 无匹配就会把整个面板退出 —— 菜单"进去就弹回 shell"就是这么来的。
+# 版式约定（别再混排）: 「现状」只放数据 →「功能」只放编号选项(1..N 连续)
+#                     →「说明」只放解释与症状指引，不需要在这里按任何键。
 _ui_ipv6_menu() {
     while true; do
         clear
-        echo -e "${CYAN}=== IPv6 管理 ===${NC}"
+        echo -e "${CYAN}=== 入口 IP 与出站优先级 ===${NC}"
         echo ""
 
         local nic_ip nic_ip6 api_ip cur="${SERVER_IP_OVERRIDE:-}"
@@ -1373,39 +1375,39 @@ _ui_ipv6_menu() {
         nic_w=$(_str_display_width "${nic_ip:-无}")
         [ "$nic_w" -lt 12 ] && nic_pad="$(printf '%*s' $((12 - nic_w)) '')"
         echo -e "  网卡 IPv4  ${nic_ip:-无}${nic_pad} 出口探测 ${api_ip:-无}"
-        echo -e "  网卡 IPv6  ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
+        echo -e "  网卡 IPv6  ${nic_ip6:-无}"
         echo -e "  出站优先   $(_dns_ipv6_status)"
+        # NAT/内网属于「说明」而不是数据, 先存起来, 挪到下方注释区显示
+        local nat_note=""
         if _is_private_ip "$entry_ip"; then
-            echo -e "  ${RED}⚠ 入口是内网/CGNAT 地址，外部连不进来 → 按 [3] 填面板入口${NC}"
+            nat_note="入口是内网/CGNAT 地址，外部连不进来 → 按 [1] 填面板入口"
         elif _is_private_ip "${nic_ip:-x}" || [ -z "$nic_ip" ]; then
             # 网卡内网(或没有 v4) = 这台在 NAT 后面，入口取的是出口探测值，二者可能不同
-            echo -e "  ${YELLOW}NAT 机器：入口取的是出口探测值，与面板入口可能不同${NC}"
+            nat_note="NAT 机器：入口取的是出口探测值，可能与面板入口不同"
         fi
         echo ""
 
-        # ---------- 症状索引 ----------
-        echo -e "  ${CYAN}连不上？按症状选按键${NC}"
-        echo -e "    ${YELLOW}从来没通过${NC} · 怎么测都超时    ${GREEN}[3]${NC} 填面板给的入口 IP/域名"
-        echo -e "    ${YELLOW}突然全不通${NC} · 延迟暴涨       ${GREEN}[5]${NC} 换 IPv6 入口（先自检）"
-        echo -e "    ${YELLOW}拿不准${NC}                      ${GREEN}[5]${NC} 不合格不会改；${GREEN}[4]${NC} 还原"
+        # ---------- 功能（编号连续，输入值就是编号，不再分组跳号）----------
+        echo -e "  ${CYAN}── 功能（共 5 项）──${NC}"
+        echo -e "    ${GREEN}[1]${NC} 设置/修改入口 IP（或域名）"
+        echo -e "    ${GREEN}[2]${NC} 清除入口 IP，恢复自动探测"
+        echo -e "    ${GREEN}[3]${NC} 一键切换 IPv6 入口"
+        echo -e "    ${GREEN}[4]${NC} 出站启用 IPv6 优先"
+        echo -e "    ${GREEN}[5]${NC} 出站恢复 IPv4 优先"
+        echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
 
-        # ---------- 操作 ----------
-        echo -e "  ${CYAN}【入口】${NC} 节点里的「服务器地址」，客户端连的就是它"
-        echo -e "    ${GREEN}[3]${NC} 设置/修改入口 IP"
-        echo -e "    ${GREEN}[4]${NC} 清除入口 IP（恢复自动探测）"
-        echo -e "    ${GREEN}[5]${NC} 一键切换 IPv6 入口（自检后写入）"
-        echo ""
-        echo -e "  ${CYAN}【出站】${NC} 服务端访问网站走 v4 还是 v6，只影响解锁流媒体"
-        echo -e "    ${RED}与客户端怎么连进来无关${NC}"
-        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先      ${GREEN}[2]${NC} 恢复 IPv4 优先"
-        echo ""
-        echo -e "    ${YELLOW}[0]${NC} 返回"
+        # ---------- 说明（纯注释，不需要按这里操作）----------
+        echo -e "  ${CYAN}── 说明 ──${NC}"
+        echo -e "   ${YELLOW}入口${NC} = 节点里的「服务器地址」，客户端连的就是它"
+        echo -e "   ${YELLOW}出站${NC} = 本机访问网站走 v4 还是 v6，只影响解锁流媒体，与连接无关"
+        echo -e "   从来没通过 → ${GREEN}[1]${NC}；突然全不通/变慢 → ${GREEN}[3]${NC}；改坏 → ${GREEN}[2]${NC} 还原"
+        [ -n "$nat_note" ] && echo -e "   ${RED}⚠ ${nat_note}${NC}"
         echo ""
         read -p "  请输入选项 [0-5]: " choice
 
         case $choice in
-            1)
+            4)
                 if [ -z "$nic_ip6" ]; then
                     _warn "未检测到公网 IPv6（fd/fc 开头的是内网 ULA 地址）。"
                     _warn "这类机器启用 IPv6 优先后，出站仍会被迫走 IPv6，容易解析失败。"
@@ -1413,8 +1415,8 @@ _ui_ipv6_menu() {
                     [[ "$_v6y" =~ ^[Yy]$ ]] || { read -p "按回车继续..."; continue; }
                 fi
                 _dns_ipv6_enable || true; read -p "按回车继续..."; ;;
-            2) _dns_ipv6_disable || true; read -p "按回车继续..."; ;;
-            3)
+            5) _dns_ipv6_disable || true; read -p "按回车继续..."; ;;
+            1)
                 echo ""
                 read -p "  请输入入口 IP（或域名）: " new_ip
                 new_ip="$(printf '%s' "$new_ip" | tr -d '[:space:]')"
@@ -1431,14 +1433,14 @@ _ui_ipv6_menu() {
                 fi
                 read -p "按回车继续..."
                 ;;
-            4)
+            2)
                 rm -f "${SERVER_IP_FILE}" 2>/dev/null
                 export SERVER_IP_OVERRIDE=""
                 server_ip=""
                 _success "已清除，恢复自动探测"
                 read -p "按回车继续..."
                 ;;
-            5)
+            3)
                 clear
                 echo -e "${CYAN}=== 切换 IPv6 入口 · 自检 ===${NC}"
                 echo ""
