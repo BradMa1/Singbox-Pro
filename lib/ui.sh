@@ -1368,7 +1368,7 @@ _ui_ipv6_menu() {
         [ -n "$entry_ip" ] || entry_ip="无"
         [ -n "$cur" ] && entry_tag="手动指定"
 
-        echo -e "  ${CYAN}── 现状 ──${NC}"
+        echo -e "  ${CYAN}── 现状（看不懂可以跳过，不影响操作）──${NC}"
         echo -e "  入口地址   ${GREEN}${entry_ip}${NC} ${YELLOW}(${entry_tag})${NC}"
         # 网卡 IP 按显示宽度补齐，保证「出口探测」这一列不随 IP 长度漂移
         local nic_w nic_pad=""
@@ -1378,12 +1378,14 @@ _ui_ipv6_menu() {
         echo -e "  网卡 IPv6  ${nic_ip6:-无}"
         echo -e "  出站优先   $(_dns_ipv6_status)"
         # NAT/内网属于「说明」而不是数据, 先存起来, 挪到下方注释区显示
-        local nat_note=""
+        local nat_note="" nat_hint=""
         if _is_private_ip "$entry_ip"; then
-            nat_note="入口是内网/CGNAT 地址，外部连不进来 → 按 [1] 填面板入口"
+            nat_note="入口是内网/CGNAT 地址，外面的电脑连不进来 → 按 [1] 填面板给的入口"
+            nat_hint="NAT 机器 = 服务商把公网 IP 分给多台机共用，只转给你一段端口"
         elif _is_private_ip "${nic_ip:-x}" || [ -z "$nic_ip" ]; then
             # 网卡内网(或没有 v4) = 这台在 NAT 后面，入口取的是出口探测值，二者可能不同
-            nat_note="NAT 机器：入口取的是出口探测值，可能与面板入口不同"
+            nat_note="网卡上没有公网 IPv4，说明这台是 NAT 机器（公网 IP 由多台机共用）"
+            nat_hint="现在的入口是从「出口探测」猜出来的，可能和面板给的对不上 → 连不上就按 [1] 手填"
         fi
         echo ""
 
@@ -1398,11 +1400,30 @@ _ui_ipv6_menu() {
         echo ""
 
         # ---------- 说明（纯注释，不需要按这里操作）----------
-        echo -e "  ${CYAN}── 说明 ──${NC}"
-        echo -e "   ${YELLOW}入口${NC} = 节点里的「服务器地址」，客户端连的就是它"
-        echo -e "   ${YELLOW}出站${NC} = 本机访问网站走 v4 还是 v6，只影响解锁流媒体，与连接无关"
-        echo -e "   从来没通过 → ${GREEN}[1]${NC}；突然全不通/变慢 → ${GREEN}[3]${NC}；改坏 → ${GREEN}[2]${NC} 还原"
-        [ -n "$nat_note" ] && echo -e "   ${RED}⚠ ${nat_note}${NC}"
+        echo -e "  ${CYAN}── 说明（只是解释，这里不用按键）──${NC}"
+        echo ""
+        echo -e "  ${YELLOW}先分清两个方向${NC}，改一个不会影响另一个："
+        echo -e "    你的电脑 ──[入口]──> 这台机器 ──[出口]──> 网站"
+        echo -e "    ${GREEN}入口${NC} 节点里填的「服务器地址」，客户端靠它找到你"
+        echo -e "         ${CYAN}→ 连不上、超时、全部 -1，问题都在这一侧${NC}"
+        echo -e "    ${GREEN}出口${NC} 这台机器访问网站时的来源 IP，网站看到的是它"
+        echo -e "         ${CYAN}→ 决定解锁哪个区、会不会被风控，跟能不能连无关${NC}"
+        echo ""
+        echo -e "  ${YELLOW}入口${NC} · 按你遇到的现象选："
+        echo -e "    从没通过，怎么测都超时     → ${GREEN}[1]${NC} 填服务商面板给的那个 IP/域名"
+        echo -e "       （脚本自动填的常是「出口 IP」，从外面连不进来，这是最常见的坑）"
+        echo -e "    本来能通，突然全挂或变慢   → ${GREEN}[3]${NC} 换成 IPv6 入口，会先自检，不合格不改"
+        echo -e "    改坏了 / 想回到默认        → ${GREEN}[2]${NC} 清除设置，[1][3] 改过的都一并撤销"
+        echo ""
+        echo -e "  ${YELLOW}出口${NC} · 只在「节点能连上但网不好用」时才需要动："
+        echo -e "    流媒体解锁失败 / 某站打不开 / 想换个对方看到的 IP → ${GREEN}[4]${NC} 优先走 IPv6"
+        echo -e "    开了 [4] 反而更慢或解析报错                       → ${GREEN}[5]${NC} 退回 IPv4"
+        echo -e "    ${RED}节点全部 -1 时不要动 [4][5]${NC}，它们只管出去的方向，改了没用"
+        if [ -n "$nat_note" ]; then
+            echo ""
+            echo -e "  ${RED}⚠ ${nat_note}${NC}"
+            echo -e "     ${RED}${nat_hint}${NC}"
+        fi
         echo ""
         read -p "  请输入选项 [0-5]: " choice
 
