@@ -48,6 +48,17 @@ _str_pad_cjk() {
     printf '%s%*s' "$s" "$pad" ""
 }
 
+# 两列菜单行: 左列按「标签 + 名称」的整体显示宽度对齐到 $5 列，再接右列。
+# 用法: _ui_two_col "[9]" "中转管理" "[10]" "WARP 管理" 28
+# 为什么不能只 pad 名称: [9] 占 3 列、[11] 占 4 列，只 pad 名称会让右列错位。
+_ui_two_col() {
+    local t1="$1" n1="$2" t2="$3" n2="$4" width="${5:-18}"
+    local pad=$((width - ${#t1} - 1 - $(_str_display_width "$n1")))
+    [ "$pad" -lt 1 ] && pad=0
+    printf '    %b%s%b %s%*s%b%s%b %s\n' \
+        "$GREEN" "$t1" "$NC" "$n1" "$pad" "" "$GREEN" "$t2" "$NC" "$n2"
+}
+
 # ============================================================
 # 顶部横幅
 # ============================================================
@@ -153,13 +164,15 @@ _ui_main_menu() {
         echo ""
 
         echo -e "  ${CYAN}【服务控制】${NC}"
-        echo -e "    ${GREEN}[7]${NC} 重启服务          ${GREEN}[8]${NC} 停止服务"
+        _ui_two_col "[7]" "重启服务" "[8]" "停止服务" 28
         echo ""
 
         echo -e "  ${CYAN}【进阶功能】${NC}"
-        echo -e "    ${GREEN}[9]${NC} 中转管理          ${GREEN}[10]${NC} WARP 管理"
-        echo -e "    ${GREEN}[11]${NC} IPv6 管理(出站+入口) ${GREEN}[12]${NC} 流媒体 DNS"
-        echo -e "    ${GREEN}[13]${NC} 证书管理(ACME 真实证书)"
+        # 左列按「标签+名称」整体对齐: 标签宽度不同([9] 3 宽 / [11] 4 宽)，
+        # 不能只 pad 名称，否则两行右列会错位(曾把 [12] 挤到 [11] 后面)
+        _ui_two_col "[9]"  "中转管理"   "[10]" "WARP 管理" 28
+        _ui_two_col "[11]" "IPv6 管理"  "[12]" "流媒体 DNS" 28
+        echo -e "    ${GREEN}[13]${NC} 证书管理 (ACME 真实证书)"
         echo ""
 
         echo -e "  ${CYAN}【系统维护】${NC}"
@@ -173,7 +186,7 @@ _ui_main_menu() {
         echo -e "    ${YELLOW}[0]${NC} 退出脚本"
         echo ""
 
-        read -p "  请输入选项 [0-18]: " choice
+        read -p "  请输入选项 [0-17]: " choice
 
         case $choice in
             1) _ui_add_node_menu ;;
@@ -1347,30 +1360,45 @@ _ui_ipv6_menu() {
         api_ip=$( { timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
                  || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null; } || true)
 
-        echo -e "  网卡 IPv4    : ${nic_ip:-无}"
-        echo -e "  API 探测出口 : ${api_ip:-无}"
-        echo -e "  网卡 IPv6    : ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
-        echo -e "  出站优先     : $(_dns_ipv6_status)"
-        echo -e "  当前入口 IP  : ${GREEN}${cur:-（未设置 · 使用自动探测）}${NC}"
+        # ---------- 现状 ----------
+        local entry_ip entry_tag="自动探测"
+        entry_ip="$(_get_public_ip 2>/dev/null || true)"
+        [ -n "$entry_ip" ] || entry_ip="无"
+        [ -n "$cur" ] && entry_tag="手动指定"
+
+        echo -e "  ${CYAN}── 现状 ──${NC}"
+        echo -e "  入口地址   ${GREEN}${entry_ip}${NC} ${YELLOW}(${entry_tag})${NC}"
+        # 网卡 IP 按显示宽度补齐，保证「出口探测」这一列不随 IP 长度漂移
+        local nic_w nic_pad=""
+        nic_w=$(_str_display_width "${nic_ip:-无}")
+        [ "$nic_w" -lt 12 ] && nic_pad="$(printf '%*s' $((12 - nic_w)) '')"
+        echo -e "  网卡 IPv4  ${nic_ip:-无}${nic_pad} 出口探测 ${api_ip:-无}"
+        echo -e "  网卡 IPv6  ${nic_ip6:-无（fd/fc 开头是内网 ULA，不算公网）}"
+        echo -e "  出站优先   $(_dns_ipv6_status)"
+        if _is_private_ip "$entry_ip"; then
+            echo -e "  ${RED}⚠ 入口是内网/CGNAT 地址，外部连不进来 → 按 [3] 填面板入口${NC}"
+        elif _is_private_ip "${nic_ip:-x}" || [ -z "$nic_ip" ]; then
+            # 网卡内网(或没有 v4) = 这台在 NAT 后面，入口取的是出口探测值，二者可能不同
+            echo -e "  ${YELLOW}NAT 机器：入口取的是出口探测值，与面板入口可能不同${NC}"
+        fi
         echo ""
-        echo -e "  ${CYAN}【出站】${NC} [1][2] 改的是${YELLOW}服务端访问网站${NC}时 v4/v6 谁优先，"
-        echo -e "  用于解锁流媒体，${RED}跟客户端怎么连进来无关${NC}。"
+
+        # ---------- 症状索引 ----------
+        echo -e "  ${CYAN}连不上？按症状选按键${NC}"
+        echo -e "    ${YELLOW}从来没通过${NC} · 怎么测都超时    ${GREEN}[3]${NC} 填面板给的入口 IP/域名"
+        echo -e "    ${YELLOW}突然全不通${NC} · 延迟暴涨       ${GREEN}[5]${NC} 换 IPv6 入口（先自检）"
+        echo -e "    ${YELLOW}拿不准${NC}                      ${GREEN}[5]${NC} 不合格不会改；${GREEN}[4]${NC} 还原"
         echo ""
-        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先（出站 · 解锁流媒体）"
-        echo -e "    ${GREEN}[2]${NC} 恢复 IPv4 优先（出站 · 默认）"
-        echo ""
-        echo -e "  ${CYAN}【入口】${NC} 节点链接里的「服务器地址」—— 客户端连的就是它"
-        echo ""
-        echo -e "  ${YELLOW}从来就没通过${NC}（怎么测都超时）      → ${GREEN}[3]${NC} 手动填面板给的 IP"
-        echo -e "     NAT 机器上脚本自动填的常是「出口 IP」，连不进来，要改面板那个入口 IP"
-        echo -e "  ${YELLOW}好好的突然全不通 / 延迟暴涨${NC}   → ${GREEN}[5]${NC} 一键换成 IPv6 入口"
-        echo -e "     IPv4 线路被拦或绕路时，改走 IPv6 常能立刻恢复（会先自动体检）"
-        echo ""
-        echo -e "  拿不准先试 ${GREEN}[5]${NC}：不合格不会乱改；改完不合适 ${GREEN}[4]${NC} 一键还原。"
-        echo ""
+
+        # ---------- 操作 ----------
+        echo -e "  ${CYAN}【入口】${NC} 节点里的「服务器地址」，客户端连的就是它"
         echo -e "    ${GREEN}[3]${NC} 设置/修改入口 IP"
         echo -e "    ${GREEN}[4]${NC} 清除入口 IP（恢复自动探测）"
         echo -e "    ${GREEN}[5]${NC} 一键切换 IPv6 入口（自检后写入）"
+        echo ""
+        echo -e "  ${CYAN}【出站】${NC} 服务端访问网站走 v4 还是 v6，只影响解锁流媒体"
+        echo -e "    ${RED}与客户端怎么连进来无关${NC}"
+        echo -e "    ${GREEN}[1]${NC} 启用 IPv6 优先      ${GREEN}[2]${NC} 恢复 IPv4 优先"
         echo ""
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
