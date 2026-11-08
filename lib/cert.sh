@@ -230,6 +230,121 @@ _cert_reload_singbox() {
 }
 
 # ============================================================
+# DNS 提供商识别 + dnsapi 插件补装
+# ============================================================
+# 直接读 shell 变量，不用 `env | grep -q`：
+#   `env | grep -q` 在 pipefail 下会被 SIGPIPE 判成失败 —— grep -q 一命中就退出，
+#   env 还在往管道写 → env 收到 SIGPIPE、退出码 141 → pipefail 让整条管道返回非 0。
+#   表现就是「明明刚刚 export 了 CF_Token，脚本却说无法确定插件」。直接展开变量
+#   没有子进程也没有管道，顺带还不受 set -u 影响（用 ${VAR:-}）。
+_cert_dns_plugin() {
+    if [ -n "${CF_Token:-}" ] || [ -n "${CF_Key:-}" ]; then
+        printf 'dns_cf'
+        return 0
+    fi
+    if [ -n "${Ali_Key:-}" ] || [ -n "${Ali_Secret:-}" ]; then
+        printf 'dns_ali'
+        return 0
+    fi
+    if [ -n "${DP_Id:-}" ] || [ -n "${DP_Key:-}" ] || [ -n "${DNSPOD_ID:-}" ] || [ -n "${DNSPOD_Key:-}" ]; then
+        printf 'dns_dp'
+        return 0
+    fi
+    if [ -n "${GANDI_API_KEY:-}" ]; then
+        printf 'dns_gandi_livedns'
+        return 0
+    fi
+    if [ -n "${OCI_CLI_TENANCY:-}" ]; then
+        printf 'dns_oci'
+        return 0
+    fi
+    return 1
+}
+
+# 单文件方式装的 acme.sh **不含 dnsapi/ 目录**，`--dns dns_cf` 会报
+# "Cannot find DNS API hook for: dns_cf"，然后退化成打印 TXT 记录让你手动加。
+# 这里按需只补那一个插件文件（几 KB），比拉整个归档包稳。
+_cert_ensure_dns_plugin() {
+    local p="$1" dst="" u sz
+    [ -n "$p" ] || return 1
+    dst="${ACME_HOME}/dnsapi/${p}.sh"
+    [ -f "$dst" ] && return 0
+    mkdir -p "${ACME_HOME}/dnsapi" 2>/dev/null || true
+    for u in \
+        "https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/dnsapi/${p}.sh" \
+        "https://fastly.jsdelivr.net/gh/acmesh-official/acme.sh@master/dnsapi/${p}.sh" \
+        "https://gcore.jsdelivr.net/gh/acmesh-official/acme.sh@master/dnsapi/${p}.sh" \
+        "https://testingcf.jsdelivr.net/gh/acmesh-official/acme.sh@master/dnsapi/${p}.sh" \
+        "https://raw.gitmirror.com/acmesh-official/acme.sh/master/dnsapi/${p}.sh" \
+        "https://ghfast.top/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/${p}.sh" \
+        "https://gh-proxy.com/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/${p}.sh" \
+        "${GH_PROXY:-https://ghproxy.net/}https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/${p}.sh" \
+        "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/${p}.sh"
+    do
+        rm -f "${dst}.tmp"
+        if curl -fsSL --connect-timeout 8 --max-time 40 "$u" -o "${dst}.tmp" 2>/dev/null; then
+            sz=$(wc -c < "${dst}.tmp" 2>/dev/null || echo 0)
+            if [ "${sz:-0}" -gt 500 ]; then
+                if mv -f "${dst}.tmp" "$dst" 2>/dev/null; then
+                    chmod +x "$dst" 2>/dev/null || true
+                    _info "已补装 DNS 插件: ${p} (${sz}B)"
+                    return 0
+                fi
+            fi
+        fi
+    done
+    rm -f "${dst}.tmp"
+    return 1
+}
+
+# Cloudflare 预检：先确认 Token 有效、且这个 Token 能看到域名所属 Zone。
+# 不做这一步的话，插件失败时只会甩一句 `invalid domain` —— 但这句话同时可能是
+#   a) Token 无效/过期  b) Token 没勾 Zone:DNS:Edit  c) Token 限制在别的 Zone
+# 三种完全不同的原因。预检能把它们分开说清楚。
+# 返回 0 = 可以继续；1 = 明确有问题（网络不通时返回 0，不阻断）
+_cert_cf_preflight() {
+    local tok="$1" d="$2" resp cand zone=""
+    command -v curl >/dev/null 2>&1 || return 0
+
+    resp="$(curl -s --connect-timeout 8 --max-time 20 \
+        -H "Authorization: Bearer $tok" \
+        https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null || true)"
+    if [ -z "$resp" ]; then
+        _warn "连不上 api.cloudflare.com，跳过 Token 预检（不影响后面的签发尝试）"
+        return 0
+    fi
+    case "$resp" in
+        *'"status":"active"'*) : ;;
+        *)
+            _error "Token 校验未通过，Cloudflare 的回应："
+            printf '    %s\n' "$(printf '%s' "$resp" | tr -d '\n' | cut -c1-200)" >&2
+            _warn "去 CF 后台 → 头像 → My Profile → API Tokens 重新复制，权限至少要有 Zone → DNS → Edit"
+            return 1
+            ;;
+    esac
+    _info "Token 有效"
+
+    # 从最长后缀往上找 Zone（zouter.hk.brad.dpdns.org → hk.brad.dpdns.org → brad.dpdns.org）
+    cand="$d"
+    while [ "$(printf '%s' "$cand" | awk -F. '{print NF}')" -ge 2 ]; do
+        resp="$(curl -s --connect-timeout 6 --max-time 15 \
+            -H "Authorization: Bearer $tok" \
+            "https://api.cloudflare.com/client/v4/zones?name=${cand}&per_page=1" 2>/dev/null || true)"
+        case "$resp" in
+            *'"name":"'"$cand"'"'*) zone="$cand"; break ;;
+        esac
+        cand="${cand#*.}"
+    done
+    if [ -n "$zone" ]; then
+        _info "Token 可管理 Zone: ${zone}"
+        return 0
+    fi
+    _error "这个 Token 查不到 ${d} 所属的 Zone（可能不属于当前 Account，或 Token 被限制到别的域名）"
+    _warn "核对两件事：① 该域名确实在这个 CF 账号下 ② 创建 Token 时 Zone Resources 选了 All zones 或包含该域名"
+    return 1
+}
+
+# ============================================================
 # 签发证书 (standalone 默认; 支持 DNS 通过环境变量)
 # ============================================================
 # 参数: $1 域名  $2 邮箱(可选, 用于注册 LET'S ENCRYPT 账号)
@@ -244,6 +359,12 @@ _cert_acme_issue() {
 
     _cert_acme_install || return 1
 
+    # 二进制的实际位置就是 acme.sh 的 LE_WORKING_DIR —— dnsapi/ 插件和 <域名>/ 证书
+    # 都在它旁边。安装位置可能不是 $HOME/.acme.sh（见 _cert_find_acme），这里对齐一次，
+    # 否则插件会补到错目录、--install-cert 也会读不到证书。
+    ACME_HOME="$(dirname "$ACME_BIN")"
+    export ACME_HOME
+
     # acme.sh 默认 CA 为 ZeroSSL，签发前必须先用邮箱注册账户（获取 EAB 凭证），
     # 否则 --issue 会报 "Please update your account with an email address first" 而直接失败。
     # 已注册则 acme.sh 自动跳过，此步幂等安全。
@@ -255,32 +376,37 @@ _cert_acme_issue() {
         _warn "若失败请改用 DNS 模式: 设置 CF_Token/CF_Account_ID 等环境变量后重跑, 或临时释放 80 端口。"
     fi
 
-    local issue_args=(--issue -d "$domain" --keylength ec-256)
+    # 默认用 Let's Encrypt：acme.sh 出厂 CA 是 ZeroSSL，而 ZeroSSL 必须先注册账号并绑定
+    # 邮箱（EAB），本脚本默认邮箱是 admin@example.com → 注册会被拒，表现为
+    # "Please update your account with an email address first"。LE 不需要 EAB，省掉这一环。
+    local issue_args=(--issue -d "$domain" --keylength ec-256 --server letsencrypt)
     if [ -n "$email" ]; then
         issue_args+=(--accountemail "$email")
     fi
 
-    # 检测 DNS API 环境变量 (以 _Token / _Key 结尾的变量) 自动切换 DNS 模式
-    local dns_mode=""
-    if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
-        dns_mode="detected"
-    fi
+    # 识别 DNS 提供商：直接读变量，不经过 env|grep（原因见 _cert_dns_plugin 注释）
+    local dns_plugin=""
+    dns_plugin="$(_cert_dns_plugin || true)"
 
     # 未检测到 DNS 凭证且处于交互终端时, 主动询问 Cloudflare 凭证
-    if [ -z "$dns_mode" ] && [ -t 1 ]; then
+    if [ -z "$dns_plugin" ] && [ -t 1 ]; then
         _warn "未检测到 DNS API 凭证。"
         _info "DNS-01 模式无需开放 80 端口，是否输入 Cloudflare 凭证? [y/N]"
         read -r -t 30 _ans 2>/dev/null
-        if [[ "$_ans" =~ ^[Yy]$ ]]; then
+        if [[ "${_ans:-}" =~ ^[Yy]$ ]]; then
             local CF_Token="" CF_Account_ID=""
-            _info "Token 以 cfut_ 开头；Account ID 为 32 位十六进制。"
+            _info "Token: CF 后台 → 头像 → My Profile → API Tokens → Create Token → Edit zone DNS"
+            _info "       形如 40 位字母数字、没有固定前缀；Account ID 为 32 位十六进制（域名 Overview 页右侧）"
             while [ -z "$CF_Token" ]; do
                 read -r -p "Cloudflare API Token: " CF_Token
                 CF_Token="$(echo "$CF_Token" | tr -d '[:space:]')"
                 if [ -z "$CF_Token" ]; then
                     _warn "API Token 不能为空，请重新输入"
                 elif echo "$CF_Token" | grep -qiE '^[0-9a-f]{32}$'; then
-                    _warn "你输入的是 32 位十六进制字符串（很像 Account ID），不是 API Token！请重新输入以 cfut_ 开头的 Token"
+                    _warn "你输入的是 32 位十六进制字符串（这是 Account ID 的格式），不是 API Token"
+                    CF_Token=""
+                elif [ "${#CF_Token}" -lt 20 ]; then
+                    _warn "Token 看起来太短（${#CF_Token} 位），请确认复制完整"
                     CF_Token=""
                 fi
             done
@@ -295,37 +421,29 @@ _cert_acme_issue() {
                 fi
             done
             export CF_Token CF_Account_ID
-            if env | grep -qiE '^(CF_Token|Ali_Key|DP_Id|DNSPOD_|GANDI_|OCI_)' ; then
-                dns_mode="detected"
-            fi
+            dns_plugin="$(_cert_dns_plugin || true)"
             _cf_from_interactive=1
         fi
     fi
 
-    if [ -n "$dns_mode" ]; then
+    if [ -n "$dns_plugin" ]; then
         if [ -n "${_cf_from_interactive:-}" ]; then
             _info "已采用你输入的 Cloudflare 凭证，使用 DNS-01 挑战 (无需开放 80 端口)..."
         else
             _info "检测到 DNS API 环境变量，使用 DNS-01 挑战 (无需开放 80 端口)..."
         fi
-        # 根据环境变量自动选择 acme.sh DNS 插件 (不能只传 --dns, 必须指定具体插件)
-        local dns_plugin=""
-        if env | grep -qiE '^CF_Token|^CF_Key' ; then
-            dns_plugin="dns_cf"
-        elif env | grep -qiE '^Ali_Key' ; then
-            dns_plugin="dns_ali"
-        elif env | grep -qiE '^DP_Id|^DNSPOD_' ; then
-            dns_plugin="dns_dp"
-        elif env | grep -qiE '^GANDI_' ; then
-            dns_plugin="dns_gandi"
-        elif env | grep -qiE '^OCI_' ; then
-            dns_plugin="dns_oci"
-        fi
-        if [ -z "$dns_plugin" ]; then
-            _error "检测到 DNS API 变量但无法确定插件, 请手动设置 (如 CF 需 CF_Token+CF_Account_ID)"
+        # 必须指定具体插件，光给 --dns 不够
+        _info "使用 DNS 插件: ${dns_plugin}"
+        if ! _cert_ensure_dns_plugin "$dns_plugin"; then
+            _error "缺少 acme.sh 的 DNS 插件 ${dns_plugin}：单文件安装不含 dnsapi/ 目录，镜像下载也没成功"
+            _warn "可手动补这一个文件后重跑："
+            echo "    mkdir -p ${ACME_HOME}/dnsapi && curl -fsSL https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/dnsapi/${dns_plugin}.sh -o ${ACME_HOME}/dnsapi/${dns_plugin}.sh" >&2
             return 1
         fi
-        _info "使用 DNS 插件: ${dns_plugin}"
+        # Cloudflare 额外预检一次：把 "invalid domain" / 401 这类含糊报错提前翻译成人话
+        if [ "$dns_plugin" = "dns_cf" ] && [ -n "${CF_Token:-}" ]; then
+            _cert_cf_preflight "$CF_Token" "$domain" || return 1
+        fi
         local acme_out
         acme_out=$("$ACME_BIN" "${issue_args[@]}" --dns "$dns_plugin" 2>&1)
         local rc=$?

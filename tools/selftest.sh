@@ -204,6 +204,22 @@ HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
     _ "$ROOT" || rc=$?
 _eq "已装 acme.sh 时直接返回 0" "0" "$rc"
 
+# 5.4 DNS 插件识别不得走 env|grep（pipefail 下 SIGPIPE 会让它误判成"没设置凭证"）
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        export CF_Token="dummy_token_1234567890" CF_Account_ID="72031701f741ca2f0d287c2d6fdf750a"
+        p="$(_cert_dns_plugin)"; [ "$p" = "dns_cf" ] || exit 3' _ "$ROOT" || rc=$?
+_eq "有 CF_Token 时识别为 dns_cf" "0" "$rc"
+
+# 5.5 无凭证时不得误判成有插件
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        unset CF_Token CF_Key Ali_Key DP_Id DNSPOD_ID GANDI_API_KEY OCI_CLI_TENANCY 2>/dev/null || true
+        p="$(_cert_dns_plugin)" || exit 0; [ -z "$p" ] || exit 4' _ "$ROOT" || rc=$?
+_eq "无凭证时插件识别为空" "0" "$rc"
+
 echo ""
 echo "────────────────────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

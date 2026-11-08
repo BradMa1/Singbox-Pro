@@ -467,6 +467,16 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.15 (2026-11-08)
+**修「填了 Token 却说无法确定插件」+ 单文件安装缺 dnsapi + 默认 CA 换 Let's Encrypt**
+
+- **根因一：`env | grep -q` 在 `pipefail` 下的 SIGPIPE**。刚 `export CF_Token` 完，`env` 还在往管道写、`grep -q` 一命中就退出 → `env` 收到 SIGPIPE（141）→ pipefail 让整条管道返回非 0 → 判定"没有凭证" → 报「检测到 DNS API 变量但无法确定插件」。改为新增 `_cert_dns_plugin()`，直接用 `${CF_Token:-}` 等变量判断，无子进程、无管道、也不怕 `set -u`。
+- **根因二：单文件安装的 acme.sh 不含 `dnsapi/` 目录**。修好识别后仍会卡在 `Cannot find DNS API hook for: dns_cf`。新增 `_cert_ensure_dns_plugin()`，按需只补一个几 KB 的插件文件（同一套 9 个镜像），并顺带把 `ACME_HOME` 对齐到二进制的实际位置（插件、`<域名>/` 证书都在它旁边）。
+- **默认 CA 从 ZeroSSL 换成 Let's Encrypt**。acme.sh 出厂是 ZeroSSL，必须注册账号绑邮箱（EAB），而本脚本默认邮箱是 `admin@example.com`，到那步必被拒（`Please update your account with an email address first`）。LE 不需要 EAB。
+- **新增 Cloudflare 预检** `_cert_cf_preflight()`：先 `user/tokens/verify` 验 Token 是否有效，再逐级查 Zone 归属。原来这三种完全不同的原因都只报一句 `invalid domain`：Token 失效 / Token 没勾 `Zone:DNS:Edit` / Token 限制在别的域名。
+- Token 提示更正：带 `cfut_` 前缀是新版 CF Token 的正常格式；只有 32 位纯十六进制才是 Account ID。另加长度下限校验。
+- `tools/selftest.sh` 新增 2 项（有 `CF_Token` 必须识别为 `dns_cf`／无凭证必须为空），共 **35 项**。
+
 ### v2.2.14 (2026-11-08)
 **修「正在安装 → 直接失败」的真正原因：错信了安装器的退出码**
 
