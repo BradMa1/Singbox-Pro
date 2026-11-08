@@ -27,8 +27,10 @@ ACME_BIN="${ACME_BIN:-${HOME:-/root}/.acme.sh/acme.sh}"
 ACME_HOME="${ACME_HOME:-${HOME:-/root}/.acme.sh}"
 CERT_META_FILE="${CERT_META_FILE:-${SINGBOX_DIR}/cert_metadata.json}"
 CERT_ACME_DIR="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
-# acme.sh 注册账户（ZeroSSL 默认 CA 需要邮箱做 EAB）所用的邮箱；可用环境变量覆盖
-CERT_EMAIL="${CERT_EMAIL:-admin@example.com}"
+# ACME 账号邮箱。留空 = 用 acme@<签发域名>（推导见 _cert_default_email）。
+# 千万不要再用 admin@example.com：example.com 是 RFC 2606 保留域名，
+# Let's Encrypt 注册账号时会直接 400 invalidContact（详见 _cert_email_ok 注释）。
+CERT_EMAIL="${CERT_EMAIL:-}"
 
 # ============================================================
 # acme.sh 安装
@@ -345,6 +347,58 @@ _cert_cf_preflight() {
 }
 
 # ============================================================
+# ACME 账号邮箱 + 账号注册
+# ============================================================
+# Let's Encrypt 在「注册账号」这一步会校验联系邮箱的域名：
+#   contact email has forbidden domain "example.com"
+#   { "type": "urn:ietf:params:acme:error:invalidContact", "status": 400 }
+# example.com / example.net / example.org 是 RFC 2606 的保留域名，一律被拒；
+# 而 acme.sh 出厂的默认账号邮箱恰好是 admin@example.com —— 旧代码把它透传给
+# --accountemail，于是 Token 验过了、插件也装上了，签发却永远失败在这句话上。
+# 现在默认改成 acme@<签发域名>（域名是用户自己的，能过校验），
+# 也支持 CERT_EMAIL 环境变量或交互输入换成真实邮箱（用来收到期提醒）。
+_cert_email_ok() {
+    case "$1" in
+        "") return 1 ;;
+        *[[:space:]]*) return 1 ;;              # 含空白
+        *@example.com|*@example.net|*@example.org) return 1 ;;
+        *@*.*) return 0 ;;
+    esac
+    return 1
+}
+
+_cert_default_email() {
+    printf 'acme@%s' "$1"
+}
+
+# acme.sh 已签发过同一域名时会打 "Skipping" 并返回非 0 → 视为成功（幂等续签路径）。
+# 用 case 而不是 `echo | grep -q`：pipefail 下 grep -q 命中即退出会让 echo 收
+# SIGPIPE(141)，整条管道非 0，于是「跳过」被判成失败（本会话已踩过同类坑）。
+_cert_out_reuse() {
+    case "$1" in
+        *Skipping*|*"Domains not changed"*|*"is still valid"*|*"Cert success"*) return 0 ;;
+    esac
+    return 1
+}
+
+# 输出里出现账号邮箱被拒的特征 → 这条是「换邮箱能救」的失败，不是域名/Token 问题
+_cert_out_bad_contact() {
+    case "$1" in
+        *invalidContact*|*"forbidden domain"*) return 0 ;;
+    esac
+    return 1
+}
+
+# 把 LE 账号对齐到 $email。register 对已存在的账号在部分版本只回显不更新，
+# 所以补一次 update-account（账号不存在时它失败，忽略）。
+_cert_acme_register() {
+    local email="$1"
+    "$ACME_BIN" --register-account --server letsencrypt -m "$email" </dev/null >/dev/null 2>&1 || true
+    "$ACME_BIN" --update-account --server letsencrypt -m "$email" </dev/null >/dev/null 2>&1 || true
+    return 0
+}
+
+# ============================================================
 # 签发证书 (standalone 默认; 支持 DNS 通过环境变量)
 # ============================================================
 # 参数: $1 域名  $2 邮箱(可选, 用于注册 LET'S ENCRYPT 账号)
@@ -354,8 +408,28 @@ _cert_cf_preflight() {
 #     例如 Cloudflare: export CF_Token=xxx CF_Account_ID=yyy
 #   - 签发成功后证书复制到 ${CERT_ACME_DIR}/<domain>/ 供 sing-box 使用
 _cert_acme_issue() {
-    local domain="$1" email="${2:-$CERT_EMAIL}"
+    local domain="$1" email="${2:-${CERT_EMAIL:-}}"
     [ -z "$domain" ] && { _error "签发证书需要域名"; return 1; }
+
+    # --- 账号邮箱：参数 > CERT_EMAIL > 交互输入 > acme@<域名> ---
+    # 为什么必须换掉 example.com：见 _cert_email_ok 上方注释（LE 400 invalidContact）。
+    if [ -n "$email" ] && ! _cert_email_ok "$email"; then
+        _warn "邮箱 ${email} 不能用（Let's Encrypt 拒收 example.com 这类保留域名），将改用默认值"
+        email=""
+    fi
+    if [ -z "$email" ] && [ -t 0 ]; then
+        _info "Let's Encrypt 账号要一个联系邮箱（用于证书到期提醒）"
+        _info "  直接回车 = $(_cert_default_email "$domain")（不影响签发）"
+        read -r -t 60 -p "  到期提醒邮箱 (可留空): " _cert_in_email 2>/dev/null || true
+        _cert_in_email="$(printf '%s' "${_cert_in_email:-}" | tr -d '[:space:]')"
+        if _cert_email_ok "$_cert_in_email"; then
+            email="$_cert_in_email"
+        elif [ -n "$_cert_in_email" ]; then
+            _warn "这个邮箱格式不对或属保留域名，改用 $(_cert_default_email "$domain")"
+        fi
+        unset _cert_in_email
+    fi
+    [ -z "$email" ] && email="$(_cert_default_email "$domain")"
 
     _cert_acme_install || return 1
 
@@ -365,10 +439,10 @@ _cert_acme_issue() {
     ACME_HOME="$(dirname "$ACME_BIN")"
     export ACME_HOME
 
-    # acme.sh 默认 CA 为 ZeroSSL，签发前必须先用邮箱注册账户（获取 EAB 凭证），
-    # 否则 --issue 会报 "Please update your account with an email address first" 而直接失败。
-    # 已注册则 acme.sh 自动跳过，此步幂等安全。
-    "$ACME_BIN" --register-account -m "$email" >/dev/null 2>&1 || true
+    # 先把 LE 账号注册到这个邮箱（幂等）。--issue 本身不接受 --accountemail，
+    # 旧写法把它塞进 issue 参数里，等于把 admin@example.com 直接发给 LE 注册接口。
+    _cert_acme_register "$email"
+    _info "ACME 账号邮箱: ${email}"
 
     # 提前确保 80 端口可达 (standalone)
     if _check_port_occupied 80 "tcp" 2>/dev/null; then
@@ -376,13 +450,9 @@ _cert_acme_issue() {
         _warn "若失败请改用 DNS 模式: 设置 CF_Token/CF_Account_ID 等环境变量后重跑, 或临时释放 80 端口。"
     fi
 
-    # 默认用 Let's Encrypt：acme.sh 出厂 CA 是 ZeroSSL，而 ZeroSSL 必须先注册账号并绑定
-    # 邮箱（EAB），本脚本默认邮箱是 admin@example.com → 注册会被拒，表现为
-    # "Please update your account with an email address first"。LE 不需要 EAB，省掉这一环。
+    # 默认 CA 用 Let's Encrypt：acme.sh 出厂是 ZeroSSL，必须先注册账号拿 EAB 且邮箱
+    # 必须是真实邮箱，多一道坑；LE 不需要 EAB，直接用。
     local issue_args=(--issue -d "$domain" --keylength ec-256 --server letsencrypt)
-    if [ -n "$email" ]; then
-        issue_args+=(--accountemail "$email")
-    fi
 
     # 识别 DNS 提供商：直接读变量，不经过 env|grep（原因见 _cert_dns_plugin 注释）
     local dns_plugin=""
@@ -444,26 +514,43 @@ _cert_acme_issue() {
         if [ "$dns_plugin" = "dns_cf" ] && [ -n "${CF_Token:-}" ]; then
             _cert_cf_preflight "$CF_Token" "$domain" || return 1
         fi
-        local acme_out
-        acme_out=$("$ACME_BIN" "${issue_args[@]}" --dns "$dns_plugin" 2>&1)
-        local rc=$?
+        local acme_out rc=0
+        acme_out=$("$ACME_BIN" "${issue_args[@]}" --dns "$dns_plugin" 2>&1) || rc=$?
+        # 账号邮箱被 LE 拒（invalidContact）时，先换邮箱重注册再重试一次。
+        # 老账号可能还绑着 example.com，只改 issue 参数不生效，必须 update-account。
+        if [ $rc -ne 0 ] && _cert_out_bad_contact "$acme_out"; then
+            _warn "Let's Encrypt 拒了这个账号邮箱，用 ${email} 重新注册账号后重试一次..."
+            _cert_acme_register "$email"
+            rc=0
+            acme_out=$("$ACME_BIN" "${issue_args[@]}" --dns "$dns_plugin" 2>&1) || rc=$?
+        fi
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
-        if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
+        if [ $rc -ne 0 ] && ! _cert_out_reuse "$acme_out"; then
             _error "DNS 模式签发失败，请重点看 acme.sh 错误关键字：invalid / permission / not found"
             echo "$acme_out" | tail -15
-            _info "常见原因：Token 无 DNS 编辑权限 / 域名未解析 / 子域名与 Zone 不匹配。详见：sb cert guide"
+            if _cert_out_bad_contact "$acme_out"; then
+                _warn "这次是账号邮箱被拒（example.com 是保留域名）。换真实邮箱重试：sb cert issue ${domain} you@yourdomain.com"
+            else
+                _info "常见原因：Token 无 DNS 编辑权限 / 域名未解析 / 子域名与 Zone 不匹配。详见：sb cert guide"
+            fi
             return 1
         fi
         echo "$acme_out" | tail -3
     else
         _warn "未检测到 DNS API 变量。"
         _info "建议：export CF_Token/CF_Account_ID 后用 DNS-01（无需 80 端口），或尝试 standalone（需 80 可达）。"
-        local acme_out
-        acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1)
-        local rc=$?
+        local acme_out rc=0
+        acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1) || rc=$?
+        if [ $rc -ne 0 ] && _cert_out_bad_contact "$acme_out"; then
+            _warn "Let's Encrypt 拒了这个账号邮箱，用 ${email} 重新注册账号后重试一次..."
+            _cert_acme_register "$email"
+            rc=0
+            acme_out=$("$ACME_BIN" "${issue_args[@]}" --standalone 2>&1) || rc=$?
+        fi
         # acme.sh 证书已存在时会输出 "Skipping" 并返回非 0, 视为成功继续落地证书 (幂等)
-        if [ $rc -ne 0 ] && ! echo "$acme_out" | grep -qiE 'Skipping|Domains not changed|is still valid|Cert success'; then
+        if [ $rc -ne 0 ] && ! _cert_out_reuse "$acme_out"; then
             _error "standalone 签发失败：80 端口不可达或域名未解析。建议改用 DNS-01，详见：sb cert guide"
+            echo "$acme_out" | tail -10
             return 1
         fi
         echo "$acme_out" | tail -3
@@ -537,6 +624,9 @@ _cert_cf_guide() {
      export CF_Account_ID="第3步的 Account ID"
      sb cert issue us.brad.dpdns.org      # 换成你的子域名即可
      （acme.sh 自动加 _acme-challenge 记录，成功后证书落到 sing-box）
+
+     想要到期提醒就加邮箱：export CERT_EMAIL=you@qq.com；不加则用 acme@你的域名。
+     ⚠️ 别用 example.com 结尾的邮箱——那是保留域名，Let's Encrypt 注册账号时会直接拒。
 
 EOF
 }

@@ -234,13 +234,14 @@ _ui_cert_menu() {
         echo -e "  ② 头像 → My Profile → API Tokens → Create Token → Edit zone DNS"
         echo -e "  ③ 任意域名 Overview 页右侧复制 Account ID"
         echo -e "  ④ 选择 [1] 后按提示输入 Token 与 Account ID 即可签发"
+        echo -e "     还会问一个「到期提醒邮箱」，直接回车 = acme@你的域名（不影响签发）"
         echo ""
         read -r -p "  请输入选项 [0-3]: " cert_choice
         cert_choice=$(echo "$cert_choice" | xargs 2>/dev/null)
 
         case "$cert_choice" in
             1)
-                read -r -p "  请输入域名 (如 hk.example.com): " domain
+                read -r -p "  请输入域名 (如 hk.yourdomain.com): " domain
                 domain=$(echo "$domain" | xargs 2>/dev/null)
                 if [ -n "$domain" ]; then
                     _cert_cli issue "$domain"

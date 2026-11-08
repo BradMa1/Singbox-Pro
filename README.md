@@ -467,6 +467,21 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.16 (2026-11-08)
+**修「Token 有效、插件也装上了，签发仍失败」：账号邮箱撞上 Let's Encrypt 保留域名**
+
+- **根因**：脚本把出厂默认邮箱 `admin@example.com` 透传给 acme.sh（`--accountemail`），而 `example.com` 是 RFC 2606 保留域名，LE 在**注册账号**这一步就 400：
+  `invalidContact: contact email has forbidden domain "example.com"`。
+  所以现象很迷惑——`Token 有效`、`Token 可管理 Zone`、`已补装 DNS 插件` 全绿，最后一句 `DNS 模式签发失败`。
+- **默认邮箱改为 `acme@<签发域名>`**（`_cert_default_email`）：域名是用户自己的，能过校验，也不需要真能收信。
+  可用环境变量 `CERT_EMAIL=you@xx.com` 或交互输入换成真实邮箱（用来收到期提醒）。
+- **`--accountemail` 从 `--issue` 参数里删掉**：该参数对 `--issue` 不生效，反而会被当成账号邮箱去注册。
+  改为签发前显式 `_cert_acme_register()`（`--register-account --server letsencrypt -m` + 一次 `--update-account`，幂等）。
+- **自愈重试**：若输出里是 `invalidContact` / `forbidden domain`（老账号还绑着 example.com），自动换邮箱重注册并重试一次；失败提示也从「Token 无权限」改成「换邮箱重试」这一条准确原因。
+- **顺带修 pipefail 隐患**：判断「Skipping（已签发跳过）」原来用 `echo | grep -qiE`，`grep -q` 提前退出会让 echo 收 SIGPIPE，把幂等路径误判成失败。改为 `case` 匹配（`_cert_out_reuse`）。
+- `tools/selftest.sh` 新增 6 项（默认邮箱推导 / 输出判定 / 端到端「被拒→换邮箱→重试成功」并校验不再带 `--accountemail`），共 **41 项**。
+- 界面文案：域名示例从 `hk.example.com` 改成 `hk.yourdomain.com`，避免用户照抄 `example.com`。
+
 ### v2.2.15 (2026-11-08)
 **修「填了 Token 却说无法确定插件」+ 单文件安装缺 dnsapi + 默认 CA 换 Let's Encrypt**
 

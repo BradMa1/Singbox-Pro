@@ -220,6 +220,104 @@ HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
         p="$(_cert_dns_plugin)" || exit 0; [ -z "$p" ] || exit 4' _ "$ROOT" || rc=$?
 _eq "无凭证时插件识别为空" "0" "$rc"
 
+# 5.6 账号邮箱不能再用 example.com（LE 保留域名，注册即 400 invalidContact）
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        if _cert_email_ok "admin@example.com"; then exit 3; fi
+        if ! _cert_email_ok "acme@hk.brad.dpdns.org"; then exit 4; fi
+        [ "$(_cert_default_email zouter.hk.brad.dpdns.org)" = "acme@zouter.hk.brad.dpdns.org" ] || exit 5
+        [ -z "$CERT_EMAIL" ] || exit 6' _ "$ROOT" || rc=$?
+_eq "默认邮箱推导为 acme@<域名> 且拒收 example.com" "0" "$rc"
+
+# 5.7 acme.sh 输出判定：invalidContact 要能认出来，"Skipping" 要当成功
+#     (注意别写成 `cmd && exit N`：set -e 会在 cmd 返回 1 时直接退出整个脚本)
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        bad="Error validating contact(s) :: contact email has forbidden domain example.com"
+        if ! _cert_out_bad_contact "$bad"; then exit 3; fi
+        if _cert_out_bad_contact "Cert success"; then exit 4; fi
+        if ! _cert_out_reuse "Skipping. Next renewal time is 2027-02-01"; then exit 5; fi
+        if _cert_out_reuse "Some other error"; then exit 6; fi' _ "$ROOT" || rc=$?
+_eq "签发输出判定（invalidContact / Skipping）" "0" "$rc"
+
+# 5.8 端到端：第一次 --issue 被 LE 拒邮箱 → 必须换邮箱重注册 + 重试一次才成功
+#     同时保证 --issue 参数里不再塞 --accountemail（旧 bug 的源头）
+AD="$CT/acme3"; mkdir -p "$AD/home/.acme.sh/dnsapi" "$AD/sb"
+printf '#!/bin/sh\n' > "$AD/home/.acme.sh/dnsapi/dns_cf.sh"
+cat > "$AD/home/.acme.sh/acme.sh" <<'FAKE_ACME'
+#!/bin/sh
+log="${ACME_ARGV_LOG:?}"
+printf '%s\n' "$*" >> "$log"
+case " $* " in
+    *" --version "*) echo "v3.1.7"; exit 0 ;;
+esac
+case " $* " in
+    *" --issue "*)
+        n=$(grep -c -- '--issue' "$log" 2>/dev/null || echo 0)
+        if [ "${n:-0}" -le 1 ]; then
+            cat <<'ERR'
+Using CA: https://acme-v02.api.letsencrypt.org/directory
+Account registration error: {
+"type": "urn:ietf:params:acme:error:invalidContact",
+"detail": "contact email has forbidden domain \"example.com\"",
+"status": 400
+}
+ERR
+            exit 1
+        fi
+        echo "Cert success."
+        exit 0 ;;
+esac
+case " $* " in
+    *" --install-cert "*)
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --fullchain-file) echo CERT > "$2"; shift 2 ;;
+                --key-file) echo KEY > "$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        exit 0 ;;
+esac
+exit 0
+FAKE_ACME
+chmod +x "$AD/home/.acme.sh/acme.sh"
+# 假 curl：让 Cloudflare 预检（tokens/verify + zones）通过，走到真正的 --issue
+mkdir -p "$AD/bin"
+cat > "$AD/bin/curl" <<'FAKE_CURL2'
+#!/bin/sh
+case "$*" in
+    *tokens/verify*) echo '{"success":true,"result":{"status":"active"}}' ;;
+    *"/zones?name="*) echo '{"success":true,"result":[{"name":"brad.dpdns.org","id":"z"}]}' ;;
+    *) exit 22 ;;
+esac
+FAKE_CURL2
+chmod +x "$AD/bin/curl"
+export ACME_ARGV_LOG="$AD/argv.log"; : > "$ACME_ARGV_LOG"
+rc=0
+HOME="$AD/home" SINGBOX_DIR="$AD/sb" CERT_ACME_DIR="$AD/sb/acme" \
+    PATH="$AD/bin:$PATH" CF_Token="dummy_token_1234567890" CF_Account_ID="72031701f741ca2f0d287c2d6fdf750a" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        _cert_acme_issue zouter.hk.brad.dpdns.org' _ "$ROOT" >/dev/null 2>&1 || rc=$?
+_eq "邮箱被拒后自动换邮箱重试并签发成功" "0" "$rc"
+
+issue_n=$(grep -c -- '--issue' "$ACME_ARGV_LOG" 2>/dev/null || true)
+_eq "失败后真的重试了一次 --issue" "2" "${issue_n:-0}"
+
+if grep -q 'acme@zouter.hk.brad.dpdns.org' "$ACME_ARGV_LOG" && ! grep -q 'example\.com' "$ACME_ARGV_LOG"; then
+    _ok "注册账号用的是 acme@<域名>，未出现 example.com"
+else
+    _no "账号邮箱仍是 example.com 或没带邮箱"
+fi
+
+if grep -q -- '--accountemail' "$ACME_ARGV_LOG"; then
+    _no "--issue 仍带 --accountemail（该参数不生效，会被 LE 忽略/误用）"
+else
+    _ok "--issue 不再带 --accountemail"
+fi
+
 echo ""
 echo "────────────────────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then
