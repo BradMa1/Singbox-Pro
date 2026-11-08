@@ -65,114 +65,142 @@ _cert_acme_install() {
     fi
 
     _info "正在安装 acme.sh (社区标准 Let's Encrypt 客户端)..."
-    local ok=0 log="/tmp/acme_install.log" tmp
+    local log="/tmp/acme_install.log" diag="/tmp/acme_install.diag" tmp="" st="" sz=0
+    local u
+    # 每一档的结论追加到这里，全部失败时一次性打出来，不用再靠猜。
+    : >"$diag" 2>/dev/null || true
 
-    # 1) 官方一键脚本 (get.acme.sh 内部自带回 github 下载)
-    if curl -fsSL --connect-timeout 15 --max-time 120 https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
-        chmod +x /tmp/acme_install.sh
-        if /tmp/acme_install.sh >"$log" 2>&1; then
-            ok=1
-        else
-            _warn "官方脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
-        fi
-        rm -f /tmp/acme_install.sh
-    else
-        _warn "下载官方安装脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
-    fi
+    # ★ 判定"装好了"只认一件事：磁盘上有没有可执行的 acme.sh。
+    #   绝不能信安装器的退出码 —— get.acme.sh 失败时只 echo "Install error"，
+    #   没有 exit 1，退出码仍是 0。旧代码据此置 ok=1，后面 4 档回退全被跳过，
+    #   界面表现就是「正在安装」下一行直接「安装失败」，中间一条提示都没有。
+    _acme_present() { [ -n "$(_cert_find_acme 2>/dev/null || true)" ]; }
 
-    # 2) get.acme.sh 经 ghproxy 镜像 (github 直连失败时)
-    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ]; then
-        _warn "回退: get.acme.sh 经 ghproxy 镜像..."
-        if curl -fsSL --connect-timeout 15 --max-time 120 "${GH_PROXY:-https://ghproxy.net/}https://get.acme.sh" -o /tmp/acme_install.sh 2>"$log"; then
-            chmod +x /tmp/acme_install.sh
-            if /tmp/acme_install.sh >"$log" 2>&1; then
-                ok=1
-            else
-                _warn "ghproxy 脚本失败: $(tail -2 "$log" | tr '\n' ' ')"
-            fi
-            rm -f /tmp/acme_install.sh
-        else
-            _warn "ghproxy 下载失败: $(tail -2 "$log" | tr '\n' ' ')"
-        fi
-    fi
-
-    # 3) 单文件直取：acme.sh 本身就是独立脚本，不需要安装器，也不依赖 github 归档包。
-    #    NAT / 纯 v6 / 出口绕路的机器上，安装器去拉 master.tar.gz 最容易超时卡死，
-    #    这一档只拉一个 4xx KB 的文本文件，成功率最高。
-    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ]; then
-        _warn "回退: 直接下载 acme.sh 单文件（跳过安装器和 github 归档包）..."
-        local u
+    # ---------- 1) 单文件直取（最可靠，放第一位） ----------
+    # acme.sh 本身就是独立脚本，不需要安装器，也不必拉 github 归档包。
+    # NAT / 纯 v6 / 出口绕路的机器上，安装器去下 master.tar.gz 最容易超时，
+    # 这一档只要一个 ~300KB 的文本文件。
+    if ! _acme_present; then
+        _info "  [1/4] 直取 acme.sh 单文件（镜像）..."
         for u in \
             "https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
             "https://fastly.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
+            "https://gcore.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
+            "https://testingcf.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
+            "https://raw.gitmirror.com/acmesh-official/acme.sh/master/acme.sh" \
             "https://ghfast.top/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
             "https://gh-proxy.com/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
             "${GH_PROXY:-https://ghproxy.net/}https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
             "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh"
         do
-            if curl -fsSL --connect-timeout 15 --max-time 90 "$u" -o /tmp/acme_single.sh 2>"$log" \
-               && [ -s /tmp/acme_single.sh ] && head -1 /tmp/acme_single.sh | grep -q '^#!'; then
-                mkdir -p "$ACME_HOME" 2>/dev/null
-                if cp -f /tmp/acme_single.sh "$ACME_HOME/acme.sh" 2>/dev/null; then
-                    chmod +x "$ACME_HOME/acme.sh" 2>/dev/null
-                    # 单文件方式绕过了官方安装器，补跑一次 --install 让它注册自动续期
-                    # 的 cron（90 天后续期靠它）；失败不影响当前使用，菜单 [3] 仍可手动续期。
-                    if command -v timeout >/dev/null 2>&1; then
-                        timeout 60 "$ACME_HOME/acme.sh" --install </dev/null >"$log" 2>&1 || true
-                    else
-                        "$ACME_HOME/acme.sh" --install </dev/null >"$log" 2>&1 || true
-                    fi
-                    ok=1
-                    _info "单文件下载成功: $u"
-                    break
-                fi
+            rm -f /tmp/acme_single.sh
+            if ! curl -fsSL --connect-timeout 8 --max-time 40 "$u" -o /tmp/acme_single.sh 2>"$log"; then
+                st="$(tail -1 "$log" 2>/dev/null | tr -d '\r')"
+                printf '  %-46s 下载失败: %s\n' "$(printf '%s' "$u" | cut -c1-46)" "${st:-超时/无响应}" >>"$diag"
+                continue
             fi
+            sz=$(wc -c < /tmp/acme_single.sh 2>/dev/null || echo 0)
+            # 只校验"是不是个像样的脚本"，不再用 head|grep（pipefail 下 grep -q 提前退出
+            # 会让 head 收到 SIGPIPE，整条管道返回非零，把好文件也判成坏文件）
+            if [ "${sz:-0}" -lt 50000 ]; then
+                printf '  %-46s 内容异常(%sB)\n' "$(printf '%s' "$u" | cut -c1-46)" "${sz:-0}" >>"$diag"
+                continue
+            fi
+            mkdir -p "$ACME_HOME" 2>/dev/null || true
+            if ! cp -f /tmp/acme_single.sh "$ACME_HOME/acme.sh" 2>/dev/null; then
+                printf '  %-46s 写入失败: %s\n' "$(printf '%s' "$u" | cut -c1-46)" "$ACME_HOME" >>"$diag"
+                continue
+            fi
+            chmod +x "$ACME_HOME/acme.sh" 2>/dev/null || true
+            if "$ACME_HOME/acme.sh" --version >/dev/null 2>&1; then
+                printf '  %-46s 成功 (%sB)\n' "$(printf '%s' "$u" | cut -c1-46)" "$sz" >>"$diag"
+                _info "单文件下载成功: $u (${sz}B)"
+                break
+            fi
+            printf '  %-46s 下载完成但跑不起来\n' "$(printf '%s' "$u" | cut -c1-46)" >>"$diag"
         done
         rm -f /tmp/acme_single.sh
     fi
 
-    # 4) git clone 官方仓库 (需 git, 通常已从 github 部署本仓库时具备)
-    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ] && command -v git >/dev/null 2>&1; then
-        _warn "回退: git clone 官方仓库..."
-        tmp=$(mktemp -d)
-        if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
-            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1 || _warn "git clone 官方失败: $(tail -2 "$log" | tr '\n' ' ')"
+    # ---------- 2) 官方一键脚本 ----------
+    if ! _acme_present; then
+        _info "  [2/4] get.acme.sh 官方安装器..."
+        if curl -fsSL --connect-timeout 10 --max-time 90 https://get.acme.sh -o /tmp/acme_install.sh 2>"$log"; then
+            chmod +x /tmp/acme_install.sh 2>/dev/null || true
+            /tmp/acme_install.sh >"$log.1" 2>&1 || true
+            rm -f /tmp/acme_install.sh
+            if ! _acme_present; then
+                st="$(grep -m1 -i 'install error' "$log.1" 2>/dev/null || true)"
+                printf '  %-46s %s\n' "get.acme.sh" "${st:-未生成 acme.sh（详见 /tmp/acme_install.log.1）}" >>"$diag"
+            fi
         else
-            _warn "git clone 官方失败: $(tail -2 "$log" | tr '\n' ' ')"
+            printf '  %-46s 下载失败: %s\n' "get.acme.sh" "$(tail -1 "$log" 2>/dev/null | tr -d '\r')" >>"$diag"
         fi
-        rm -rf "$tmp"
     fi
 
-    # 5) git clone 经 ghproxy 镜像 (最后兜底)
-    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ] && command -v git >/dev/null 2>&1; then
-        _warn "回退: git clone 经 ghproxy 镜像..."
-        tmp=$(mktemp -d)
-        if git clone --depth 1 "${GH_PROXY:-https://ghproxy.net/}https://github.com/acmesh-official/acme.sh.git" "$tmp/acme.sh" >"$log" 2>&1; then
-            (cd "$tmp/acme.sh" && ./acme.sh --install >"$log" 2>&1) && ok=1 || _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"
+    # ---------- 3) get.acme.sh 经 GH_PROXY 镜像 ----------
+    if ! _acme_present; then
+        _info "  [3/4] get.acme.sh 经镜像..."
+        if curl -fsSL --connect-timeout 10 --max-time 90 "${GH_PROXY:-https://ghproxy.net/}https://get.acme.sh" -o /tmp/acme_install.sh 2>"$log"; then
+            chmod +x /tmp/acme_install.sh 2>/dev/null || true
+            /tmp/acme_install.sh >"$log.1" 2>&1 || true
+            rm -f /tmp/acme_install.sh
+            if ! _acme_present; then
+                st="$(grep -m1 -i 'install error' "$log.1" 2>/dev/null || true)"
+                printf '  %-46s %s\n' "get.acme.sh(ghproxy)" "${st:-未生成 acme.sh}" >>"$diag"
+            fi
         else
-            _warn "ghproxy clone 失败: $(tail -2 "$log" | tr '\n' ' ')"
+            printf '  %-46s 下载失败: %s\n' "get.acme.sh(ghproxy)" "$(tail -1 "$log" 2>/dev/null | tr -d '\r')" >>"$diag"
         fi
-        rm -rf "$tmp"
     fi
 
-    # 不管哪一档成功，都按实际落地位置回填 ACME_BIN
+    # ---------- 4) git clone（需 git；有 git 说明这台能连 github） ----------
+    if ! _acme_present && command -v git >/dev/null 2>&1; then
+        _info "  [4/4] git clone 仓库..."
+        for u in \
+            "https://github.com/acmesh-official/acme.sh.git" \
+            "${GH_PROXY:-https://ghproxy.net/}https://github.com/acmesh-official/acme.sh.git"
+        do
+            tmp="$(mktemp -d)"
+            if git clone --depth 1 "$u" "$tmp/acme.sh" >"$log.1" 2>&1; then
+                (cd "$tmp/acme.sh" && ./acme.sh --install >/dev/null 2>&1) || true
+                _acme_present && break
+            fi
+            printf '  %-46s 失败: %s\n' "$(printf '%s' "$u" | cut -c1-46)" "$(tail -1 "$log.1" 2>/dev/null | tr -d '\r')" >>"$diag"
+            rm -rf "$tmp"
+        done
+        if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
+    fi
+
+    # ---------- 收尾：按实际落地位置回填，并补装自动续期 cron ----------
     found="$(_cert_find_acme || true)"
     if [ -n "$found" ]; then
         ACME_BIN="$found"
         export ACME_BIN
+        # 单文件/直取方式绕过了官方安装器，补跑一次 --install 注册 90 天续期 cron。
+        # 失败不影响当前使用，菜单 [3] 随时能手动续期。
+        if [ ! -f "${ACME_HOME}/account.conf" ] && [ ! -d "${ACME_HOME}/ca" ]; then
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 60 "$ACME_BIN" --install </dev/null >/dev/null 2>&1 || true
+            else
+                "$ACME_BIN" --install </dev/null >/dev/null 2>&1 || true
+            fi
+        fi
         _success "acme.sh 安装完成: $($ACME_BIN --version 2>/dev/null | tail -1)"
         _info "安装位置: $ACME_BIN"
         return 0
     fi
 
-    _error "acme.sh 安装失败：直连 / ghproxy / 单文件镜像 / git clone 都没成功"
-    if [ -s "$log" ]; then
-        _info "最后一次输出: $(tail -3 "$log" 2>/dev/null | tr '\n' ' ')"
+    _error "acme.sh 安装失败：单文件镜像 / 官方安装器 / 镜像安装器 / git clone 都没成功"
+    if [ -s "$diag" ]; then
+        _info "各档结果（哪一步断的看这里）:"
+        sed -n '1,12p' "$diag" >&2
     fi
-    _warn "可在本机手动执行后重试："
+    _warn "这台机器连不上 jsDelivr / github，通常是 DNS 或出站被拦。可先验证："
+    echo "    curl -sI https://cdn.jsdelivr.net | head -1     # 通 → 有响应；不通 → 看下面手动装" >&2
+    _warn "手动装（把 <可用镜像> 换成上面 curl 能通的那个域名）："
     echo "    mkdir -p ~/.acme.sh && curl -fsSL https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh -o ~/.acme.sh/acme.sh && chmod +x ~/.acme.sh/acme.sh" >&2
     return 1
-
 }
 
 # 把已签发的 acme 证书同步到 sing-box 实际使用的 cert.pem/key.pem,

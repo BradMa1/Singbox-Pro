@@ -153,6 +153,58 @@ else
 fi
 
 echo ""
+echo "── 5. acme.sh 安装判定 ────────────────────"
+CT="$TMP/cert"; mkdir -p "$CT/bin" "$CT/home"
+# 假 curl：get.acme.sh 返回一个「只打印 Install error、退出码 0」的安装器，其余请求一律失败。
+# 这正是线上踩到的形态——安装器失败却不 exit 1，旧代码据此判成功，后面各档全被跳过。
+cat > "$CT/bin/curl" <<'FAKE_ACMECURL'
+#!/bin/sh
+out=""; url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+case "$url" in
+    *get.acme.sh)
+        printf '#!/bin/sh\necho "Install error"\nexit 0\n' > "$out"
+        exit 0 ;;
+    *) exit 22 ;;
+esac
+FAKE_ACMECURL
+printf '#!/bin/sh\nexit 1\n' > "$CT/bin/git"      # 假装没有 git，避免真联网
+printf '#!/bin/sh\nexit 1\n' > "$CT/bin/crontab"  # 不碰本机 crontab
+chmod +x "$CT/bin/"*
+
+rm -f /tmp/acme_install.diag
+
+# 5.1 安装器退出码 0 却没生成 acme.sh → 必须判失败，且不能把 set -e 带崩
+rc=0
+HOME="$CT/home" SINGBOX_DIR="$CT/sb" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"; _cert_acme_install' \
+    _ "$ROOT" >/dev/null 2>&1 || rc=$?
+_eq "安装器假成功（退出码0/无文件）判为失败" "1" "$rc"
+
+# 5.2 失败时诊断表要写明是哪一档断的，而不是一片空白
+if grep -q 'Install error' /tmp/acme_install.diag 2>/dev/null; then
+    _ok "失败诊断表记录了安装器报错"
+else
+    _no "失败诊断表为空或没记原因"
+fi
+
+# 5.3 已存在 acme.sh 时直接返回 0，不应再联网
+mkdir -p "$CT/home2/.acme.sh"
+printf '#!/bin/sh\necho v9.9.9\n' > "$CT/home2/.acme.sh/acme.sh"
+chmod +x "$CT/home2/.acme.sh/acme.sh"
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CT/sb2" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"; _cert_acme_install >/dev/null 2>&1' \
+    _ "$ROOT" || rc=$?
+_eq "已装 acme.sh 时直接返回 0" "0" "$rc"
+
+echo ""
 echo "────────────────────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then
     printf '  \033[0;32m全部通过\033[0m (%d 项)\n\n' "$PASS"
