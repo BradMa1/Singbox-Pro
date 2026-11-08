@@ -467,6 +467,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.13 (2026-11-08)
+**修复 acme.sh「明明装上了却报安装失败」+ 新增镜像直取**
+
+- **根因一：只认 `$HOME/.acme.sh/acme.sh` 一个位置**。安装器实际会落到 `/home/xxx/.acme.sh`（`sudo` 没带 `-H`）、`/usr/local/bin/acme.sh`（包管理器版）等地，脚本却只看 `$HOME`，于是打完「[信息] 正在安装」后直接跳到「[错误] 安装失败」，中间一条提示都没有。新增 `_cert_find_acme()`，依次检查 `$ACME_BIN`、`$HOME/.acme.sh`、`/root/.acme.sh`、`/usr/local/bin`、`/usr/bin`、`command -v acme.sh`，命中即回填 `ACME_BIN`。
+- **根因二：安装器要拉 github 归档包**。NAT / 纯 IPv6 / 出口绕路的机器上 `master.tar.gz` 最容易超时。新增「单文件直取」一档：acme.sh 本身就是独立脚本，直接从 jsDelivr / fastly / ghfast.top / gh-proxy 下载 300KB 文本落到 `~/.acme.sh/acme.sh`，再补跑 `--install` 注册续期 cron。实测 jsDelivr 与 fastly 均返回 200 / 304KB。
+- **失败时不再无声**：除了保留每一档的 `[注意]`，最后会打印安装日志末尾三行，并直接给出可复制的单行手动安装命令。
+- 证书状态页（`[2]`）也改用同一套探测，不再因为路径不同而显示「未安装」。
+
 ### v2.2.12 (2026-11-08)
 **无 IPv6 的机器不再列出用不了的选项**
 

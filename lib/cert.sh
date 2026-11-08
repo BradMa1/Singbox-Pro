@@ -23,8 +23,8 @@ if ! declare -f _info >/dev/null 2>&1; then
     }
 fi
 
-ACME_BIN="${ACME_BIN:-$HOME/.acme.sh/acme.sh}"
-ACME_HOME="${ACME_HOME:-$HOME/.acme.sh}"
+ACME_BIN="${ACME_BIN:-${HOME:-/root}/.acme.sh/acme.sh}"
+ACME_HOME="${ACME_HOME:-${HOME:-/root}/.acme.sh}"
 CERT_META_FILE="${CERT_META_FILE:-${SINGBOX_DIR}/cert_metadata.json}"
 CERT_ACME_DIR="${CERT_ACME_DIR:-${SINGBOX_DIR}/acme}"
 # acme.sh 注册账户（ZeroSSL 默认 CA 需要邮箱做 EAB）所用的邮箱；可用环境变量覆盖
@@ -33,9 +33,28 @@ CERT_EMAIL="${CERT_EMAIL:-admin@example.com}"
 # ============================================================
 # acme.sh 安装
 # ============================================================
+# 安装器可能把 acme.sh 放到与 $ACME_BIN 不同的位置：
+#   - `sudo` 未带 -H 时 HOME 仍是被 sudo 的用户 → 装到 /home/xxx/.acme.sh
+#   - 某些镜像的包自带 /usr/local/bin/acme.sh
+# 只看 $HOME/.acme.sh 会误判成"安装失败"（界面表现为：信息→错误，中间没有任何注意）。
+_cert_find_acme() {
+    local c
+    for c in "$ACME_BIN" "${ACME_HOME}/acme.sh" "${HOME:-/root}/.acme.sh/acme.sh" \
+             /root/.acme.sh/acme.sh /usr/local/bin/acme.sh /usr/bin/acme.sh; do
+        [ -n "$c" ] && [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    c="$(command -v acme.sh 2>/dev/null || true)"
+    [ -n "$c" ] && [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+    return 1
+}
+
 _cert_acme_install() {
-    if [ -x "$ACME_BIN" ]; then
-        _info "acme.sh 已安装: $($ACME_BIN --version 2>/dev/null | head -1)"
+    local found
+    found="$(_cert_find_acme || true)"
+    if [ -n "$found" ]; then
+        ACME_BIN="$found"
+        export ACME_BIN
+        _info "acme.sh 已安装: $($ACME_BIN --version 2>/dev/null | tail -1)  ($ACME_BIN)"
         return 0
     fi
 
@@ -62,7 +81,7 @@ _cert_acme_install() {
     fi
 
     # 2) get.acme.sh 经 ghproxy 镜像 (github 直连失败时)
-    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ]; then
+    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ]; then
         _warn "回退: get.acme.sh 经 ghproxy 镜像..."
         if curl -fsSL --connect-timeout 15 --max-time 120 "${GH_PROXY:-https://ghproxy.net/}https://get.acme.sh" -o /tmp/acme_install.sh 2>"$log"; then
             chmod +x /tmp/acme_install.sh
@@ -77,8 +96,43 @@ _cert_acme_install() {
         fi
     fi
 
-    # 3) git clone 官方仓库 (需 git, 通常已从 github 部署本仓库时具备)
-    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ] && command -v git >/dev/null 2>&1; then
+    # 3) 单文件直取：acme.sh 本身就是独立脚本，不需要安装器，也不依赖 github 归档包。
+    #    NAT / 纯 v6 / 出口绕路的机器上，安装器去拉 master.tar.gz 最容易超时卡死，
+    #    这一档只拉一个 4xx KB 的文本文件，成功率最高。
+    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ]; then
+        _warn "回退: 直接下载 acme.sh 单文件（跳过安装器和 github 归档包）..."
+        local u
+        for u in \
+            "https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
+            "https://fastly.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh" \
+            "https://ghfast.top/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
+            "https://gh-proxy.com/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
+            "${GH_PROXY:-https://ghproxy.net/}https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" \
+            "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh"
+        do
+            if curl -fsSL --connect-timeout 15 --max-time 90 "$u" -o /tmp/acme_single.sh 2>"$log" \
+               && [ -s /tmp/acme_single.sh ] && head -1 /tmp/acme_single.sh | grep -q '^#!'; then
+                mkdir -p "$ACME_HOME" 2>/dev/null
+                if cp -f /tmp/acme_single.sh "$ACME_HOME/acme.sh" 2>/dev/null; then
+                    chmod +x "$ACME_HOME/acme.sh" 2>/dev/null
+                    # 单文件方式绕过了官方安装器，补跑一次 --install 让它注册自动续期
+                    # 的 cron（90 天后续期靠它）；失败不影响当前使用，菜单 [3] 仍可手动续期。
+                    if command -v timeout >/dev/null 2>&1; then
+                        timeout 60 "$ACME_HOME/acme.sh" --install </dev/null >"$log" 2>&1 || true
+                    else
+                        "$ACME_HOME/acme.sh" --install </dev/null >"$log" 2>&1 || true
+                    fi
+                    ok=1
+                    _info "单文件下载成功: $u"
+                    break
+                fi
+            fi
+        done
+        rm -f /tmp/acme_single.sh
+    fi
+
+    # 4) git clone 官方仓库 (需 git, 通常已从 github 部署本仓库时具备)
+    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ] && command -v git >/dev/null 2>&1; then
         _warn "回退: git clone 官方仓库..."
         tmp=$(mktemp -d)
         if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$tmp/acme.sh" >"$log" 2>&1; then
@@ -89,8 +143,8 @@ _cert_acme_install() {
         rm -rf "$tmp"
     fi
 
-    # 4) git clone 经 ghproxy 镜像 (最后兜底)
-    if [ "$ok" -ne 1 ] && [ ! -x "$ACME_BIN" ] && command -v git >/dev/null 2>&1; then
+    # 5) git clone 经 ghproxy 镜像 (最后兜底)
+    if [ "$ok" -ne 1 ] && [ -z "$(_cert_find_acme || true)" ] && command -v git >/dev/null 2>&1; then
         _warn "回退: git clone 经 ghproxy 镜像..."
         tmp=$(mktemp -d)
         if git clone --depth 1 "${GH_PROXY:-https://ghproxy.net/}https://github.com/acmesh-official/acme.sh.git" "$tmp/acme.sh" >"$log" 2>&1; then
@@ -101,13 +155,24 @@ _cert_acme_install() {
         rm -rf "$tmp"
     fi
 
-    if [ -x "$ACME_BIN" ]; then
-        _success "acme.sh 安装完成: $($ACME_BIN --version 2>/dev/null | head -1)"
+    # 不管哪一档成功，都按实际落地位置回填 ACME_BIN
+    found="$(_cert_find_acme || true)"
+    if [ -n "$found" ]; then
+        ACME_BIN="$found"
+        export ACME_BIN
+        _success "acme.sh 安装完成: $($ACME_BIN --version 2>/dev/null | tail -1)"
+        _info "安装位置: $ACME_BIN"
         return 0
     fi
 
-    _error "acme.sh 安装失败，请手动安装: https://github.com/acmesh-official/acme.sh"
+    _error "acme.sh 安装失败：直连 / ghproxy / 单文件镜像 / git clone 都没成功"
+    if [ -s "$log" ]; then
+        _info "最后一次输出: $(tail -3 "$log" 2>/dev/null | tr '\n' ' ')"
+    fi
+    _warn "可在本机手动执行后重试："
+    echo "    mkdir -p ~/.acme.sh && curl -fsSL https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh -o ~/.acme.sh/acme.sh && chmod +x ~/.acme.sh/acme.sh" >&2
     return 1
+
 }
 
 # 把已签发的 acme 证书同步到 sing-box 实际使用的 cert.pem/key.pem,
@@ -521,7 +586,15 @@ _cert_cli() {
             _cert_list
             ;;
         status|*)
-            _info "acme.sh: $([ -x "$ACME_BIN" ] && echo "已安装 ($ACME_BIN)" || echo "未安装 (sb cert issue 时自动安装)")"
+            local _ab
+            _ab="$(_cert_find_acme || true)"
+            if [ -n "$_ab" ]; then
+                ACME_BIN="$_ab"
+                export ACME_BIN
+                _info "acme.sh: 已安装 ($ACME_BIN)"
+            else
+                _info "acme.sh: 未安装 (sb cert issue 时自动安装)"
+            fi
             _cert_list
             ;;
     esac
