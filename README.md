@@ -457,6 +457,19 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 
 ## 更新日志
 
+### v2.2.9 (2026-11-08)
+**NAT 入口判定加固 + 静态检查 + 冒烟测试**
+
+- **弃用 `grep -oP`（Alpine 上的隐形雷）**：`_get_public_ip` 取网卡 IPv4 原来用 `grep -oP 'inet \K[\d.]+'`，BusyBox / BSD grep 不支持 `-P`，在 Alpine 上会**静默返回空** → 退回 API 探测 → NAT 机器于是拿到「出口 IP」当入口，节点全部 -1。改用 `awk '{print $2}' | cut -d/ -f1`，GNU / BusyBox / BSD 都能跑。菜单 11 里的同一段也一起换了。
+- **新增 `_is_private_ip`**：覆盖 RFC1918、`100.64.0.0/10`（运营商级 NAT，部分 NAT VPS 网卡就在这个段）、`169.254/16`、IPv6 ULA(`fc00::/7`) 与链路本地(`fe80::/10`)。
+- **NAT 机器主动告警**：网卡是内网地址、入口地址取自出口探测时，明确提示「出口 ≠ 入口，连不上就去菜单 `11 → [3]` 填面板给的入口 IP / 域名」；探测到内网/CGNAT 地址、或完全不达时也有对应提示。之前这种情况是静默生成一条必然连不通的链接。
+- **状态栏红字提示**：入口地址是内网/CGNAT 时，主菜单顶部直接标红并给出按键指引。
+- **修 `sni` 空值隐患**：`_proto_vless_ws_uri` 里 `local ... sni="${4:-$server_ip}"` 与 `server_ip` 写在同一个 `local` 语句里——`local` 的参数在赋值前就已展开，省略第 4 个参数时 SNI 取到的是外层旧值（通常为空），生成的节点连不上。已拆成两行赋值。
+- **可选参数补默认值**：Reality / VLESS-WS / VMess 链接生成函数的第 5–8 位参数改为 `${N:-}`，`set -u` 下少传参数不再直接闪退。
+- **修顶层 `local`**：`protocols.sh` 独立运行分支在函数外用了 `local`，会打印 `local: can only be used in a function`；已去掉。
+- **新增 `tools/selftest.sh`（28 项）**：用假 `ip`/`curl`/`timeout` 在临时目录里跑，不碰真机配置。覆盖语法检查、内网/CGNAT 判定、入口 IP 探测四条路径、`set -e` 不闪退、链接生成（缺省 SNI / IPv6 方括号）。`bash tools/selftest.sh`，退出码 0 = 全过。
+- **静态检查结论**：`shellcheck -S warning` 的 3 处 `SC2168`（函数外 `local`）与 1 处 `SC2318`（同 `local` 内引用未赋值变量）已清零；其余 352 处 `SC2155`（`local x=$(...)` 声明与赋值同行）属风格问题，会在 `set -e` 下掩盖返回值，但不影响当前逻辑，暂不批量改。
+
 ### v2.2.8 (2026-11-06)
 **服务健康判定 + 自动回滚（修「面板说正常、节点全 -1」的误判）**
 - **重启后改为验证「端口真的在监听」**：原来只 `systemctl is-active`，而 `Restart=always` 在崩溃重启的间隙里仍可能返回 active，实际一个端口都没有（2026-10-03 的香港机器就是这样，误判「服务正常」排查了很久）。现在要求「进程在 + 端口数 > 0」双条件，并检测 `NRestarts` 增长直接判定崩溃循环（1 秒内失败，不必等满 15 秒）。

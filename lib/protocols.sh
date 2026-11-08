@@ -82,10 +82,10 @@ EOF
 
 _proto_reality_uri() {
     local uuid="$1" server_ip="$2" port="$3" sni="${4:-$DEFAULT_SNI}"
-    local short_id="$5" name="$6" flow="${7:-xtls-rprx-vision}"
+    local short_id="${5:-}" name="${6:-}" flow="${7:-xtls-rprx-vision}"
     local ep=$(_url_encode "$name")
 
-    local pbk="$8"
+    local pbk="${8:-}"
     [ -z "$pbk" ] && {
         # 回退: 从 config.json 提取私钥后推算公钥不可行，尝试元数据
         # 实际不应走到这里 — 新节点必定传 pbk
@@ -108,8 +108,11 @@ _proto_reality_uri() {
 # 与 Reality 不同: 用普通 TLS (证书 SAN 需含公网 IP, _proto_generate_cert 已处理),
 # 不需要 pbk/sid。客户端 (v2rayN sing-box 核心) 信任证书或开跳过证书验证即可。
 _proto_vless_ws_uri() {
-    local uuid="$1" server_ip="$2" port="$3" sni="${4:-$server_ip}"
-    local ws_path="${5:-/ws}" name="$6" tag="${7:-}"
+    local uuid="$1" server_ip="$2" port="$3"
+    # 不能写成同一个 local 里的 sni="${4:-$server_ip}": local 的参数在赋值前就已展开,
+    # 那时 $server_ip 还是外层旧值(通常为空), 省参调用时 SNI 会丢 → 节点连不上。
+    local sni="${4:-$server_ip}"
+    local ws_path="${5:-/ws}" name="${6:-}" tag="${7:-}"
     local ep=$(_url_encode "$name")
     local penc=$(_url_encode "$ws_path")
 
@@ -498,7 +501,7 @@ EOF
 
 _proto_vmess_ws_uri() {
     local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
-    local name="$5"
+    local name="${5:-}"
     local fp=$(_cert_sha256)
 
     # VMess 完整 Xray 配置 (v2rayN「从剪贴板导入」专用):
@@ -548,7 +551,7 @@ _proto_vmess_ws_standard_uri() {
     # 注意: 标准格式无法携带证书指纹, 自签证书需客户端手动「允许不安全」
     # (小火箭仍支持 allowInsecure, 不在 8.1 弃用名单; v2rayN 仅作备选导入)
     local uuid="$1" server_ip="$2" port="$3" ws_path="${4:-/ws}"
-    local name="$5"
+    local name="${5:-}"
     local vmess_json=$(jq -nc \
         --arg v "2" \
         --arg ps "$name" \
@@ -953,9 +956,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     if _sb_is_installed 2>/dev/null; then
         echo "已配置的入站:"
         _proto_list_inbounds | while read -r line; do
-            local tag=$(echo "$line" | jq -r .tag)
-            local type=$(echo "$line" | jq -r .type)
-            local port=$(echo "$line" | jq -r .listen_port)
+            # 这里是脚本顶层(不在函数内): 用 local 会报 "local: can only be used in a function"
+            tag=$(echo "$line" | jq -r .tag)
+            type=$(echo "$line" | jq -r .type)
+            port=$(echo "$line" | jq -r .listen_port)
             echo "  ${type}  :${port}  ($tag)"
         done
     fi

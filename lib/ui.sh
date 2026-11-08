@@ -123,6 +123,11 @@ _ui_status_panel() {
         fi
     else
         echo -e "  IPv4: ${GREEN}${ip}${NC}  IPV6: ${GREEN}${ipv6}${NC}"
+        # 自动探测到内网/CGNAT 地址 = 用它生成的节点外部一定连不上（NAT VPS 常见）
+        if _is_private_ip "$ip"; then
+            echo -e "  ${RED}⚠ 入口地址 ${ip} 是内网/CGNAT，外部连不进来${NC}"
+            echo -e "  ${YELLOW}  → 菜单 [11] → [3] 填入面板给的入口 IP 或域名${NC}"
+        fi
     fi
     echo ""
     echo -e "  ${CYAN}Sing-box${NC} v${sb_ver} ${sb_status} | ${CYAN}Argo${NC} ${argo_status} | ${CYAN}WARP${NC} ${warp_status} | 节点: ${node_count}"
@@ -1333,9 +1338,11 @@ _ui_ipv6_menu() {
         echo ""
 
         local nic_ip nic_ip6 api_ip cur="${SERVER_IP_OVERRIDE:-}"
+        # 与 core.sh 的 _get_public_ip 保持一致: 不用 grep -oP (BusyBox/BSD 不支持)
         nic_ip=$( { ip -4 addr show scope global 2>/dev/null \
+                 | grep 'inet ' \
                  | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
-                 | grep -oP 'inet \K[\d.]+' | head -1; } || true)
+                 | awk '{print $2}' | cut -d/ -f1 | head -1; } || true)
         nic_ip6="$(_nic_ipv6_preferred 2>/dev/null || true)"
         api_ip=$( { timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
                  || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null; } || true)

@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.8"
+export PROJECT_VERSION_FALLBACK="2.2.9"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
@@ -148,7 +148,7 @@ server_ip=""
 if ! declare -f _get_public_ip >/dev/null 2>&1; then
     _get_public_ip() {
         [ -n "$server_ip" ] && [ "$server_ip" != "null" ] && { echo "$server_ip"; return; }
-        local ip
+        local ip nic_private=""
 
         # 最高优先级：手动覆盖 (NAT VPS 场景)
         if [ -n "${SERVER_IP_OVERRIDE:-}" ]; then
@@ -160,14 +160,19 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
         # 从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
         # 注意: 纯 IPv6 机器/无 ip 命令时 grep 会返回非零, pipefail+set -e 会把
         # 整个面板带走, 因此必须兜住（与 _nic_ipv6_* 系列同一类加固）
+        # 用 awk 取第二列而非 grep -oP: BusyBox/BSD grep 不支持 -P，在 Alpine 上会
+        # 静默返回空 → 退回 API 探测 → NAT 机器拿到出口 IP(曾导致全部节点 -1)
         ip=$( { ip -4 addr show scope global 2>/dev/null \
+                | grep 'inet ' \
                 | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
-                | grep -oP 'inet \K[\d.]+' | head -1; } || true)
-        if [ -n "$ip" ] && ! echo "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.)'; then
+                | awk '{print $2}' | cut -d/ -f1 | head -1; } || true)
+        if [ -n "$ip" ] && ! _is_private_ip "$ip"; then
             server_ip="$ip"
             echo "$ip"
             return
         fi
+        # 网卡有地址但是内网段 → 说明这台机器在 NAT 后面，下面探测到的只是「出口」
+        [ -n "$ip" ] && nic_private=1
 
         # 网卡无公网 IP → API 查询
         ip=$( { timeout 5 curl -s4 --max-time 2 icanhazip.com 2>/dev/null || \
@@ -178,9 +183,20 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
                               timeout 5 curl -s6 --max-time 2 ipinfo.io/ip 2>/dev/null; } || true)
         # 网卡是内网 + 探测到 WARP/CDN 出口 IP → 几乎可以肯定不是可入站的入口 IP
         # （常见于 NAT LXC / 宿主机 WARP 出站，节点会全部连接超时）
-        if _is_warp_or_cdn_ip "$ip"; then
+        if [ -z "$ip" ]; then
+            _warn "未能探测到公网 IP（无外网出口或探测接口被墙），节点链接里的地址会是空的。"
+            _warn "请在主菜单 [11] IPv6 管理 → [3] 手动指定入口 IP / 域名。"
+        elif _is_private_ip "$ip"; then
+            # 内网 / CGNAT 地址在公网上不可达，用它生成节点 = 客户端全部超时
+            _warn "探测到的地址 ${ip} 属于内网 / 运营商 NAT(CGNAT) 段，外部连不进来。"
+            _warn "请在主菜单 [11] IPv6 管理 → [3] 填入面板给出的入口 IP 或域名。"
+        elif _is_warp_or_cdn_ip "$ip"; then
             _warn "探测到的公网 IP ${ip} 属于 Cloudflare WARP 出口段，很可能无法入站连接。"
-            _warn "NAT/LXC 机器请在主菜单 [18] 入口 IP 设置 里手动填写面板给出的真实入口 IP。"
+            _warn "NAT/LXC 机器请在主菜单 [11] IPv6 管理 → [3] 手动填写面板给出的真实入口 IP。"
+        elif [ -n "$nic_private" ]; then
+            # NAT 机器：出口 IP 不等于入口 IP（面板给的映射地址可能完全不同）
+            _warn "本机网卡是内网地址（NAT 环境），入口地址取自出口探测 ${ip}，两者不一定相同。"
+            _warn "若节点连不上，请在主菜单 [11] IPv6 管理 → [3] 填面板给出的入口 IP / 域名。"
         fi
         server_ip="$ip"
         echo "$ip"
@@ -202,6 +218,30 @@ if ! declare -f _is_warp_or_cdn_ip >/dev/null 2>&1; then
             104.1[6-9].*|104.2[0-9].*|104.3[0-1].*)        return 0 ;;   # 104.16.0.0/12
             188.114.9[6-9].*|188.114.1[0-1][0-9].*|188.114.12[0-7].*) return 0 ;;  # 188.114.96.0/19
             2a09:bac1:*|2A09:BAC1:*)                        return 0 ;;   # WARP IPv6
+        esac
+        return 1
+    }
+fi
+
+# ============================================================
+# 内网 / CGNAT 地址识别
+# ============================================================
+# 内网地址在公网上不可达，用它生成节点 = 客户端全部超时（NAT VPS 踩过多次）。
+# 除 RFC1918 外还要覆盖：
+#   - 100.64.0.0/10  运营商级 NAT（部分 NAT VPS 的网卡就是这个段）
+#   - 169.254.0.0/16 链路本地（DHCP 失败时的自赋值）
+#   - fc00::/7 ULA、fe80::/10 链路本地 IPv6
+if ! declare -f _is_private_ip >/dev/null 2>&1; then
+    _is_private_ip() {
+        local ip="${1:-}"
+        [ -z "$ip" ] && return 1
+        case "$ip" in
+            10.*|127.*|169.254.*|192.168.*)                        return 0 ;;
+            172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)                return 0 ;;
+            100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) return 0 ;;
+            [fF][cCdD]*)                                           return 0 ;;  # ULA
+            [fF][eE][89aAbB]*)                                     return 0 ;;  # fe80::/10
+            ::1)                                                   return 0 ;;
         esac
         return 1
     }
