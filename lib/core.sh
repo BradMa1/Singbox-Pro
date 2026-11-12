@@ -7,7 +7,7 @@
 #   所有模块 *_MOD_VERSION / SCRIPT_VERSION 都引用它。
 #   运行时优先从 git 仓库自动派生精确版本 (vX.Y.Z / vX.Y.Z-N-ghash / vX.Y.Z-dirty)，
 #   非 git 安装 (curl 逐文件部署，无 .git) 时回退到下方字面量常量。
-export PROJECT_VERSION_FALLBACK="2.2.16"
+export PROJECT_VERSION_FALLBACK="2.2.17"
 
 # 从 git 推导精确版本号；不在 git 仓库中则返回 fallback
 _get_project_version() {
@@ -140,6 +140,32 @@ if ! declare -f _get_os_info >/dev/null 2>&1; then
     }
 fi
 
+# --- 网卡 IPv4 读取 ---
+# 取第一个「非回环 / 非 docker 网桥 / 非 veth / 非 WARP 隧道」的 IPv4。
+#
+# 【v2.2.17 修的坑】旧写法是
+#     ip -4 addr show scope global | grep 'inet ' | grep -v 'docker\|br-\|veth\|wgcf\|lo'
+# 想用 grep -v 'lo' 排掉 lo 回环，但每一行正常地址都带 "scope global"，
+# "global" 里含 "lo" → 整行被一起过滤掉 → 结果永远是空 → 「网卡优先」从未生效，
+# 每次都退到 API 探测（WARP 出口被劫持时就拿到不可入站的 IP）。
+# 实测：机器上跑这条管道输出为空，rc=1。
+# 改为按「接口名整词」判断（与 _nic_ipv6_list 同一套做法），不再对整行做子串匹配。
+if ! declare -f _nic_ipv4 >/dev/null 2>&1; then
+    _nic_ipv4() {
+        { ip -4 addr show scope global 2>/dev/null | awk '
+            /^[0-9]+: / {
+                iface = $2; sub(/:$/, "", iface); sub(/@.*/, "", iface)
+                skip = (iface ~ /^(lo|docker|br-|veth|wgcf|tailscale|zt|tun|wg)/)
+                next
+            }
+            /inet / && !skip {
+                split($2, a, "/")
+                if (a[1] == "") next
+                print a[1]; exit
+            }'; } || true
+    }
+fi
+
 # --- 公网 IP (带全局缓存) ---
 # NAT VPS 环境下 API 返回的出口 IP 可能不等于面板分配的端口映射 IP
 # 设置 SERVER_IP_OVERRIDE 强制使用指定 IP，例如:
@@ -158,14 +184,10 @@ if ! declare -f _get_public_ip >/dev/null 2>&1; then
         fi
 
         # 从网卡读取真实 IP (避免 wgcf/WARP 劫持公网 API)
-        # 注意: 纯 IPv6 机器/无 ip 命令时 grep 会返回非零, pipefail+set -e 会把
-        # 整个面板带走, 因此必须兜住（与 _nic_ipv6_* 系列同一类加固）
-        # 用 awk 取第二列而非 grep -oP: BusyBox/BSD grep 不支持 -P，在 Alpine 上会
+        # 注意: 纯 IPv6 机器/无 ip 命令时必须兜住, 否则 pipefail+set -e 会把整个面板带走
+        # 用 awk 取地址列而非 grep -oP: BusyBox/BSD grep 不支持 -P，在 Alpine 上会
         # 静默返回空 → 退回 API 探测 → NAT 机器拿到出口 IP(曾导致全部节点 -1)
-        ip=$( { ip -4 addr show scope global 2>/dev/null \
-                | grep 'inet ' \
-                | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
-                | awk '{print $2}' | cut -d/ -f1 | head -1; } || true)
+        ip="$(_nic_ipv4)"
         if [ -n "$ip" ] && ! _is_private_ip "$ip"; then
             server_ip="$ip"
             echo "$ip"

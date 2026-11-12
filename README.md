@@ -98,7 +98,9 @@ bash --version
 | `sb cert issue <域名> [邮箱]` | 用 acme.sh 签发 Let's Encrypt 真实证书（standalone / DNS 自动识别），为 AnyTLS/TUIC/Hysteria2/VLESS-WS/Trojan 切换真实证书 |
 | `sb cert guide` | 查看 Cloudflare DNS-01 设置指引（A 记录 / API Token / Account ID 三步） |
 | `sb cert renew [域名]` | 续期证书（不指定域名则全部） |
-| `sb cert list` / `status` | 列出 / 查看已签发证书 |
+| `sb cert sync` | 把 `acme/<域名>/` 里的证书同步到 `cert.pem` / `key.pem` 并重启（修「续期成功但节点挂了」） |
+| `sb cert fix` | 一键修全：补自动续期任务 + 补 renew hook + 同步证书（换机器/老脚本签的证书用这条） |
+| `sb cert list` / `status` | 列出 / 查看已签发证书（含剩余天数与自动续期状态） |
 | `sb help` | 显示帮助信息 |
 
 #### 证书 → 真实证书自动切换机制
@@ -109,6 +111,23 @@ bash --version
 **AnyTLS / TUIC / Hysteria2 / VLESS-WS / Trojan**。
 
 VLESS-Reality 不依赖这张证书（它走 reality 握手），保持原样。
+
+#### 证书是怎么自动续的（v2.2.17 起）
+
+一条链路，三个环节，任一环断了都会「续期成功但节点全挂」：
+
+```
+acme.sh --cron  →  acme/<域名>/fullchain.pem  →  renew hook  →  cert.pem/key.pem  →  重启 sing-box
+   ①调度              ②签发                           ③同步                                    ④生效
+```
+
+- **① 调度**：优先 `acme-renew.timer`（systemd，每天 03:17），没有 systemd 再退回 crontab。
+  最小化镜像常常**没有 cron 守护进程**，`acme.sh --install-cronjob` 会静默失败——这就是香港机潜伏的坑。
+- **② 签发**：始终写 `acme/<域名>/`，Trojan 直接引用这里，所以它永远最新。
+- **③ 同步**：靠 `--renew-hook`。老版本脚本签的证书没有这个 hook → `cert.pem` 永远停在签发当天。
+- **④ 生效**：hook 里带 `systemctl restart sing-box`。
+
+`sb cert fix` 就是把 ①③ 补齐再执行 ④；`sb health`（菜单 [16]）会逐项报这三环的状态。
 
 > **前置条件（签发前必须完成）**：
 > 1. 域名已把 **A 记录解析到本机公网 IP**（如 `69.42.222.160`）；
@@ -466,6 +485,37 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/BradMa1/Singbox-Pro/refs
 ---
 
 ## 更新日志
+
+### v2.2.17 (2026-11-12)
+**修「证书到期当天，AnyTLS/Hy2/TUIC 同时连不上」：续期成功了，但没有落到 cert.pem**
+
+- **事故现场**（RN 实测）：`config.json` 里 3 个 TLS inbound 都引用 `${SINGBOX_DIR}/cert.pem`，
+  而 acme.sh 续期只写 `${SINGBOX_DIR}/acme/<域名>/`，两者靠 renew hook 同步。
+  那张 `cert.pem` 是 8 月老版本脚本签的，**conf 里 `Le_RenewHook` / `Le_ReloadCmd` 都是空**
+  → 10-28 自动续期成功、trojan（直接引用 acme 路径）一直正常，
+  但 `cert.pem` 停在旧证书，11-11 23:59 一过，三个协议同时握手失败。
+  客户端只会报 TLS 错误，服务器端口全在监听，极难定位。
+- **第二个更隐蔽的坑（香港机实测）**：最小化镜像**没有 cron 守护进程**，
+  acme.sh 的 `--install-cronjob` 静默失败 → 自动续期任务从未存在，
+  证书到期后一切 TLS 协议静默失效，任何日志都不报错。
+- **新增 `_cert_ensure_renew_schedule()`**：续期调度三态检测（cron / systemd timer / none）；
+  没有就装 `acme-renew.timer`（每天 03:17，`Persistent=true`），不依赖 cron 包；
+  装不上再回退 `acme.sh --install-cronjob`。签发和手动续期结束时都会自动调用。
+- **新增 `_cert_ensure_hook()`**：幂等重注册 `--install-cert --renew-hook`
+  （ECC 目录 `<域名>_ecc/` 会自动加 `--ecc` 重试），用来给**老脚本签的证书**补 hook。
+- **新增 `sb cert sync`**：把 acme 证书同步到 `cert.pem/key.pem` 并重启，修「续了没生效」。
+- **新增 `sb cert fix`**（菜单 [13] → [4]）：补调度 + 补 hook + 同步证书，一条命令修全。
+- **健康检查（菜单 [16]）新增「证书」段**：每个域名报剩余天数（<15 天黄、过期红）、
+  `cert.pem` 与 acme 证书的 serial 是否一致、renew hook 是否注册。
+  之前这三样坏了，`sb health` 全绿——这是本次事故能潜伏 3 个月的原因。
+- **`sb cert status`** 增加自动续期状态提示；`sb cert list` 增加 `[剩 N 天]` / `[已过期]` 标记。
+- **顺手修掉一个一直没生效的功能**：网卡 IPv4 探测里的 `grep -v 'lo'` 想排掉回环，
+  但正常地址行都带 `scope global`，`global` 里含 `lo` → **整行被一起过滤**，
+  `_get_public_ip()` 的「网卡优先、避免被 WARP 出口劫持」从来没起作用，每次都退到 API 探测。
+  改为按接口名整词跳过（`lo|docker|br-|veth|wgcf|...`），与 IPv6 那套逻辑统一。
+  真机验证：RN 上旧写法输出空、rc=1，新写法正确取到 `64.188.27.28` 并跳过 4 个 docker 网桥。
+- `tools/selftest.sh` 新增 10 项（剩余天数 / 调度三态 / `_ecc` 布局 / 自检输出格式 /
+  hook 缺失识别 / `sb cert fix` 路径 / 网卡 IP 取出 / docker 网桥跳过等），共 **51 项**。
 
 ### v2.2.16 (2026-11-08)
 **修「Token 有效、插件也装上了，签发仍失败」：账号邮箱撞上 Let's Encrypt 保留域名**

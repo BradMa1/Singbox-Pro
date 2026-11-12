@@ -232,6 +232,254 @@ _cert_reload_singbox() {
 }
 
 # ============================================================
+# 续期可靠性: 调度 (cron/timer) + renew hook + cert.pem 一致性
+# ============================================================
+# 为什么要有这一段 (v2.2.17 事故复盘):
+#   1) cert.pem 是三个 TLS inbound (AnyTLS/Hy2/TUIC) 硬编码引用的文件，
+#      而 acme.sh 续期只写 ${CERT_ACME_DIR}/<域名>/。两者靠 renew hook 同步。
+#      老版本签发的证书没有 hook → 续期成功但 cert.pem 停在旧证书 →
+#      旧证书一到期，三个协议同时挂，且客户端只报握手失败，极难定位。
+#   2) 最小化镜像常常没有 cron 守护进程，acme.sh 的 --install-cronjob 会
+#      静默失败 → "自动续期"从来不存在，证书 90 天后静默失效。
+#   所以这里做三件事: 保证调度存在 (无 cron 就装 systemd timer)、
+#   保证 hook 存在 (幂等重注册)、保证 cert.pem 与 acme 证书一致 (可检测可修复)。
+
+# renew hook 命令串: 路径在注册时展开成绝对路径 (cron/timer 环境没有我们的变量)
+_cert_renew_hook_cmd() {
+    local domain="$1"
+    printf "cp -f '%s' '%s' && cp -f '%s' '%s' && chmod 644 '%s' && chmod 600 '%s' && (systemctl restart sing-box || true)" \
+        "${CERT_ACME_DIR}/${domain}/fullchain.pem" "${SINGBOX_DIR}/cert.pem" \
+        "${CERT_ACME_DIR}/${domain}/privkey.pem" "${SINGBOX_DIR}/key.pem" \
+        "${SINGBOX_DIR}/cert.pem" "${SINGBOX_DIR}/key.pem"
+}
+
+# 幂等注册 install-cert + renew hook (老证书没 hook 时靠它补齐)
+_cert_ensure_hook() {
+    local domain="$1" hook
+    [ -n "$domain" ] || return 1
+    if [ ! -x "${ACME_BIN:-}" ]; then
+        local f
+        f="$(_cert_find_acme 2>/dev/null || true)"
+        [ -n "$f" ] || return 1
+        ACME_BIN="$f"; export ACME_BIN
+    fi
+    hook="$(_cert_renew_hook_cmd "$domain")"
+    if "$ACME_BIN" --install-cert -d "$domain" \
+        --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
+        --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
+        --renew-hook "$hook" >/dev/null 2>&1; then
+        return 0
+    fi
+    # ECC 证书目录是 <域名>_ecc/，部分 acme.sh 版本需要显式 --ecc
+    "$ACME_BIN" --install-cert -d "$domain" --ecc \
+        --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
+        --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
+        --renew-hook "$hook" >/dev/null 2>&1
+}
+
+# 找到某个域名的 acme 配置 (兼容 <域名>/ 与 <域名>_ecc/ 两种布局)
+_cert_conf_file() {
+    local domain="$1" c home
+    home="${ACME_HOME:-${HOME:-/root}/.acme.sh}"
+    for c in "${home}/${domain}_ecc/${domain}.conf" "${home}/${domain}/${domain}.conf"; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    return 1
+}
+
+_cert_serial() {
+    [ -f "$1" ] || return 1
+    openssl x509 -in "$1" -noout -serial 2>/dev/null | cut -d= -f2
+}
+
+# 证书剩余天数 (负数=已过期; 解析失败返回 1)
+_cert_days_left() {
+    local f="$1" end epoch now
+    [ -f "$f" ] || return 1
+    command -v openssl >/dev/null 2>&1 || return 1
+    end=$(openssl x509 -in "$f" -noout -enddate 2>/dev/null | cut -d= -f2)
+    [ -n "$end" ] || return 1
+    # GNU date 优先，BSD/macOS date 兜底 (自测脚本在 macOS 上跑)
+    epoch=$(date -d "$end" +%s 2>/dev/null) || \
+    epoch=$(date -j -u -f "%b %d %H:%M:%S %Y" "${end% GMT}" +%s 2>/dev/null) || return 1
+    now=$(date +%s)
+    echo $(( (epoch - now) / 86400 ))
+}
+
+# 自动续期调度现状: cron / timer / none
+_cert_renew_schedule() {
+    local cl="" tl="" bin
+    cl=$(crontab -l 2>/dev/null || true)
+    case "$cl" in
+        *acme.sh*--cron*) printf 'cron'; return 0 ;;
+    esac
+    if command -v systemctl >/dev/null 2>&1; then
+        tl=$(systemctl list-timers --all --no-pager 2>/dev/null || true)
+        case "$tl" in
+            *acme-renew*) printf 'timer'; return 0 ;;
+        esac
+    fi
+    printf 'none'
+    return 1
+}
+
+# 没有调度就装一个。优先 systemd timer —— 不依赖 cron 包，最小化镜像也能用
+_cert_ensure_renew_schedule() {
+    local mode bin home
+    mode=$(_cert_renew_schedule 2>/dev/null || true)
+    [ "$mode" != "none" ] && [ -n "$mode" ] && return 0
+
+    bin="${ACME_BIN:-$ACME_HOME/acme.sh}"
+    home="${ACME_HOME:-$(dirname "$bin")}"
+
+    if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ] && [ -w /etc/systemd/system ]; then
+        cat > /etc/systemd/system/acme-renew.service <<EOF
+[Unit]
+Description=acme.sh renewal check (Singbox-Pro)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${bin} --cron --home ${home}
+EOF
+        cat > /etc/systemd/system/acme-renew.timer <<'EOF'
+[Unit]
+Description=Daily acme.sh renewal check (Singbox-Pro)
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+        if systemctl daemon-reload >/dev/null 2>&1 && systemctl enable --now acme-renew.timer >/dev/null 2>&1; then
+            _success "已注册自动续期: systemd timer acme-renew.timer (每天 03:17 检查)"
+            return 0
+        fi
+        _warn "systemd timer 注册失败, 回退 acme.sh 自带 cron..."
+    fi
+
+    "$ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
+    mode=$(_cert_renew_schedule 2>/dev/null || true)
+    if [ "$mode" != "none" ] && [ -n "$mode" ]; then
+        _success "已注册自动续期: $mode"
+        return 0
+    fi
+    _warn "未能自动注册续期任务。请手动加: 17 3 * * * ${bin} --cron --home ${home}"
+    return 1
+}
+
+# 把 acme 目录下的证书全部同步到 cert.pem/key.pem 并重启 (修复"续了但没生效")
+# 已一致时不重启 —— 重启要断 1~2 秒连接，没必要为"什么都没变"付这个代价
+_cert_sync_all() {
+    local n=0 d dom before after
+    before="$(_cert_serial "${SINGBOX_DIR}/cert.pem" 2>/dev/null || true)"
+    for d in "${CERT_ACME_DIR}"/*/; do
+        [ -d "$d" ] || continue
+        dom=$(basename "$d")
+        if _cert_sync_cert "$dom"; then
+            _info "已同步 ${dom} -> cert.pem / key.pem"
+            n=$((n+1))
+        fi
+    done
+    if [ "$n" -eq 0 ]; then
+        _warn "没有可同步的 acme 证书 (${CERT_ACME_DIR} 为空)"
+        return 1
+    fi
+    after="$(_cert_serial "${SINGBOX_DIR}/cert.pem" 2>/dev/null || true)"
+    if [ -n "$after" ] && [ "$before" = "$after" ]; then
+        _info "cert.pem 已是最新 (serial ${after})，无需重启 sing-box"
+        return 0
+    fi
+    _cert_reload_singbox
+    return 0
+}
+
+# 一键修复: 补调度 + 补 hook + 对齐 cert.pem
+_cert_fix() {
+    local rc=0 dom
+    _cert_ensure_renew_schedule || rc=1
+    if [ -f "$CERT_META_FILE" ]; then
+        while IFS= read -r dom; do
+            [ -z "$dom" ] && continue
+            [ -f "${CERT_ACME_DIR}/${dom}/fullchain.pem" ] || continue
+            if _cert_ensure_hook "$dom"; then
+                _info "已确认续期 hook: ${dom}"
+            else
+                _warn "补续期 hook 失败: ${dom}"
+                rc=1
+            fi
+        done < <(jq -r 'keys[]' "$CERT_META_FILE" 2>/dev/null || true)
+    fi
+    _cert_sync_all || rc=1
+    return $rc
+}
+
+# 自检: 每行输出 "<ok|warn|fail>\t<文案>"，供健康检查(菜单16)直接渲染
+_cert_selfcheck() {
+    local mode dom cert days conf s1 s2
+    mode=$(_cert_renew_schedule 2>/dev/null || true)
+    case "$mode" in
+        cron)  printf 'ok\t自动续期已注册 (cron)\n' ;;
+        timer) printf 'ok\t自动续期已注册 (systemd timer)\n' ;;
+        *)     printf 'fail\t自动续期未注册 —— 到期后会静默失效 (修复: sb cert fix)\n' ;;
+    esac
+
+    if [ ! -f "$CERT_META_FILE" ]; then
+        printf 'warn\t未签发真实证书 (TLS 节点用自签证书)\n'
+        return 0
+    fi
+
+    local domains=""
+    domains=$(jq -r 'keys[]' "$CERT_META_FILE" 2>/dev/null || true)
+    if [ -z "$domains" ]; then
+        printf 'warn\t未签发真实证书 (TLS 节点用自签证书)\n'
+        return 0
+    fi
+
+    while IFS= read -r dom; do
+        [ -z "$dom" ] && continue
+        cert="${CERT_ACME_DIR}/${dom}/fullchain.pem"
+        if [ ! -f "$cert" ]; then
+            printf 'fail\t%s 证书文件缺失: %s\n' "$dom" "$cert"
+            continue
+        fi
+        days=$(_cert_days_left "$cert" 2>/dev/null || true)
+        if [ -z "$days" ]; then
+            printf 'warn\t%s 到期时间无法解析\n' "$dom"
+        elif [ "$days" -le 0 ]; then
+            printf 'fail\t%s 已过期 %s 天\n' "$dom" "$((-days))"
+        elif [ "$days" -lt 15 ]; then
+            printf 'warn\t%s 剩 %s 天到期 (尽快续期: sb cert renew)\n' "$dom" "$days"
+        else
+            printf 'ok\t%s 剩 %s 天\n' "$dom" "$days"
+        fi
+
+        # cert.pem / key.pem 是否就是这个域名的证书
+        if [ -f "${SINGBOX_DIR}/cert.pem" ]; then
+            s1=$(_cert_serial "${SINGBOX_DIR}/cert.pem" || true)
+            s2=$(_cert_serial "$cert" || true)
+            if [ -n "$s1" ] && [ -n "$s2" ] && [ "$s1" != "$s2" ]; then
+                printf 'fail\tcert.pem 与 acme 证书不一致 (TLS 节点仍在用旧证书) —— 修复: sb cert sync\n'
+            else
+                printf 'ok\tcert.pem 已与 %s 同步\n' "$dom"
+            fi
+        fi
+
+        conf=$(_cert_conf_file "$dom" 2>/dev/null || true)
+        if [ -n "$conf" ]; then
+            if grep -qE "^Le_(RenewHook|ReloadCmd)='[^']" "$conf" 2>/dev/null; then
+                printf 'ok\t%s 续期后会自动同步 cert.pem 并重启\n' "$dom"
+            else
+                printf 'warn\t%s 未注册续期 hook (续期后 cert.pem 不会更新) —— 修复: sb cert fix\n' "$dom"
+            fi
+        fi
+    done <<< "$domains"
+}
+
+# ============================================================
 # DNS 提供商识别 + dnsapi 插件补装
 # ============================================================
 # 直接读 shell 变量，不用 `env | grep -q`：
@@ -558,18 +806,23 @@ _cert_acme_issue() {
 
     # 复制证书到统一目录
     mkdir -p "${CERT_ACME_DIR}/${domain}"
-    # renew-hook: acme.sh 自动 cron 续期成功后, 同步新证书到 sing-box 并重启加载。
-    # 路径在注册时即展开为绝对路径 (cron 环境无我们的变量), 否则 90 天后续期成功
-    # 但 cert.pem 还是旧证书 → 全部 TLS inbound 在旧证书过期后崩。
-    local renew_hook="cp -f '${CERT_ACME_DIR}/${domain}/fullchain.pem' '${SINGBOX_DIR}/cert.pem' && cp -f '${CERT_ACME_DIR}/${domain}/privkey.pem' '${SINGBOX_DIR}/key.pem' && chmod 644 '${SINGBOX_DIR}/cert.pem' && chmod 600 '${SINGBOX_DIR}/key.pem' && (systemctl restart sing-box || true)"
+    # renew-hook: acme.sh 自动续期成功后, 同步新证书到 sing-box 并重启加载。
+    # 路径在注册时即展开为绝对路径 (cron/timer 环境无我们的变量), 否则 90 天后续期
+    # 成功但 cert.pem 还是旧证书 → 全部 TLS inbound 在旧证书过期后崩。
+    local renew_hook
+    renew_hook="$(_cert_renew_hook_cmd "$domain")"
     if ! "$ACME_BIN" --install-cert -d "$domain" \
         --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
         --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
         --renew-hook "$renew_hook" 2>/dev/null; then
-        # 回退: 直接复制 acme.sh 仓库内证书
-        local src_dir="${ACME_HOME}/${domain}"
-        cp -f "${src_dir}/fullchain.cer" "${CERT_ACME_DIR}/${domain}/fullchain.pem" 2>/dev/null || true
-        cp -f "${src_dir}/${domain}.key" "${CERT_ACME_DIR}/${domain}/privkey.pem" 2>/dev/null || true
+        # 回退: 直接复制 acme.sh 仓库内证书 (ECC 证书落在 <域名>_ecc/)
+        local src_dir=""
+        for src_dir in "${ACME_HOME}/${domain}_ecc" "${ACME_HOME}/${domain}"; do
+            [ -d "$src_dir" ] || continue
+            cp -f "${src_dir}/fullchain.cer" "${CERT_ACME_DIR}/${domain}/fullchain.pem" 2>/dev/null || true
+            cp -f "${src_dir}/${domain}.key" "${CERT_ACME_DIR}/${domain}/privkey.pem" 2>/dev/null || true
+            break
+        done
     fi
 
     if [ -f "${CERT_ACME_DIR}/${domain}/fullchain.pem" ] && [ -f "${CERT_ACME_DIR}/${domain}/privkey.pem" ]; then
@@ -593,6 +846,8 @@ _cert_acme_issue() {
         else
             _warn "覆盖 ${SINGBOX_DIR}/cert.pem 失败, 请手动复制 acme 证书"
         fi
+        # 没有自动续期调度 = 90 天后静默失效。这里保证一定有 (无 cron 时装 systemd timer)
+        _cert_ensure_renew_schedule || true
         return 0
     fi
 
@@ -660,7 +915,12 @@ _cert_acme_renew() {
         _info "证书已同步到 sing-box (${SINGBOX_DIR}/cert.pem), 重启加载..."
         _cert_reload_singbox
     fi
-    _success "续期完成 (已签证书会在到期前由 acme.sh cron 自动续期, 续期后自动同步到 sing-box)"
+    # 续期顺手把"自动续期调度 + renew hook"补齐, 避免这次手动续了、下次到期又静默失效
+    _cert_ensure_renew_schedule || true
+    if [ -n "$domain" ]; then
+        _cert_ensure_hook "$domain" || true
+    fi
+    _success "续期完成 (已签证书会在到期前自动续期, 续期后自动同步到 sing-box)"
 }
 
 # ============================================================
@@ -785,13 +1045,22 @@ _cert_list() {
     while IFS= read -r domain; do
         [ -z "$domain" ] && continue
         cert_path=$(jq -r --arg d "$domain" '.[$d].cert // empty' "$CERT_META_FILE" 2>/dev/null)
+        local days="" mark=""
         if [ -f "$cert_path" ] && command -v openssl >/dev/null 2>&1; then
             expiry=$( { openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | cut -d= -f2; } || true)
-            expiry=$(date -d "$expiry" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$expiry")
+            expiry=$(date -d "$expiry" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+                     || date -j -f "%b %d %H:%M:%S %Y %Z" "$expiry" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+                     || echo "$expiry")
+            days=$(_cert_days_left "$cert_path" 2>/dev/null || true)
+            if [ -n "$days" ] && [ "$days" -le 0 ]; then
+                mark=" ${RED}[已过期]${NC}"
+            elif [ -n "$days" ] && [ "$days" -lt 15 ]; then
+                mark=" ${YELLOW}[剩 ${days} 天]${NC}"
+            fi
         else
             expiry="未知"
         fi
-        echo "  ${domain}  过期: ${expiry}  cert: ${cert_path}"
+        echo -e "  ${domain}  过期: ${expiry}${mark}  cert: ${cert_path}"
     done <<< "$domains"
 }
 
@@ -818,6 +1087,12 @@ _cert_cli() {
         renew)
             _cert_acme_renew "$arg1"
             ;;
+        sync)
+            _cert_sync_all
+            ;;
+        fix)
+            _cert_fix
+            ;;
         list)
             _cert_list
             ;;
@@ -831,6 +1106,13 @@ _cert_cli() {
             else
                 _info "acme.sh: 未安装 (sb cert issue 时自动安装)"
             fi
+            local _mode
+            _mode=$(_cert_renew_schedule 2>/dev/null || true)
+            case "$_mode" in
+                cron)  _info "自动续期: 已注册 (cron)" ;;
+                timer) _info "自动续期: 已注册 (systemd timer acme-renew.timer)" ;;
+                *)     _warn "自动续期: 未注册 —— 证书到期后会静默失效，执行 sb cert fix 修复" ;;
+            esac
             _cert_list
             ;;
     esac
@@ -846,6 +1128,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "  issue <域名> [邮箱]   签发 Let's Encrypt 证书 (standalone/DNS 自动)"
     echo "  guide                 查看 Cloudflare DNS-01 设置指引 (如何在 CF 建记录/Token)"
     echo "  renew [域名]          续期 (不指定域名则全部)"
+    echo '  sync                  把 acme 证书同步到 cert.pem/key.pem 并重启 (修「续了没生效」)'
+    echo "  fix                   一键修复: 补自动续期调度 + 补 renew hook + 同步证书"
     echo "  list                  列出已签发证书"
     echo "  status                状态"
 fi

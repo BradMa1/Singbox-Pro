@@ -1167,6 +1167,19 @@ _sb_health_check() {
         _include_status "WARP ($warp_status)" "warn"
     fi
 
+    # 6.5 证书 (v2.2.17: 续期调度 + hook + cert.pem 一致性)
+    # 事故背景: 证书续期成功但 cert.pem 没同步 / 续期任务根本没建，
+    # 都会在证书到期那一刻让 AnyTLS/Hy2/TUIC 同时握手失败，且日志里看不出原因。
+    if declare -f _cert_selfcheck >/dev/null 2>&1; then
+        echo -e "${BLUE}── 证书 ──${NC}"
+        local _cst="" _cmsg=""
+        while IFS=$'\t' read -r _cst _cmsg; do
+            [ -z "$_cst" ] && continue
+            _include_status "$_cmsg" "$_cst"
+        done < <(_cert_selfcheck 2>/dev/null)
+        echo ""
+    fi
+
     # 7. 核心版本
     echo -e "${BLUE}── 核心版本 ──${NC}"
     _sb_check_core_update

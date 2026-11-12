@@ -227,6 +227,7 @@ _ui_cert_menu() {
         echo -e "    ${GREEN}[1]${NC} 签发/更新证书"
         echo -e "    ${GREEN}[2]${NC} 查看证书状态与列表"
         echo -e "    ${GREEN}[3]${NC} 续期证书 (自动续期失败时手动用)"
+        echo -e "    ${GREEN}[4]${NC} 一键修复续期 (补自动续期任务 + 同步 cert.pem)"
         echo -e "    ${YELLOW}[0]${NC} 返回"
         echo ""
         echo -e "  ${YELLOW}[Cloudflare DNS-01 准备步骤]${NC}"
@@ -236,7 +237,7 @@ _ui_cert_menu() {
         echo -e "  ④ 选择 [1] 后按提示输入 Token 与 Account ID 即可签发"
         echo -e "     还会问一个「到期提醒邮箱」，直接回车 = acme@你的域名（不影响签发）"
         echo ""
-        read -r -p "  请输入选项 [0-3]: " cert_choice
+        read -r -p "  请输入选项 [0-4]: " cert_choice
         cert_choice=$(echo "$cert_choice" | xargs 2>/dev/null)
 
         case "$cert_choice" in
@@ -258,6 +259,7 @@ _ui_cert_menu() {
                 _cert_cli renew "$domain"
                 read -p "按回车键继续..."
                 ;;
+            4) _cert_cli fix; read -p "按回车键继续..." ;;
             0) return ;;
             *) _warn "无效选项，请重试"; sleep 1 ;;
         esac
@@ -1354,11 +1356,9 @@ _ui_ipv6_menu() {
         echo ""
 
         local nic_ip nic_ip6 api_ip cur="${SERVER_IP_OVERRIDE:-}"
-        # 与 core.sh 的 _get_public_ip 保持一致: 不用 grep -oP (BusyBox/BSD 不支持)
-        nic_ip=$( { ip -4 addr show scope global 2>/dev/null \
-                 | grep 'inet ' \
-                 | grep -v 'docker\|br-\|veth\|wgcf\|lo' \
-                 | awk '{print $2}' | cut -d/ -f1 | head -1; } || true)
+        # 与 core.sh 的 _get_public_ip 共用 _nic_ipv4（同一个 bug 修一次就够：
+        # 旧写法 grep -v 'lo' 会把带 "scope global" 的正常行全过滤掉）
+        nic_ip="$(_nic_ipv4 2>/dev/null || true)"
         nic_ip6="$(_nic_ipv6_preferred 2>/dev/null || true)"
         api_ip=$( { timeout 5 curl -s4 --max-time 3 icanhazip.com 2>/dev/null \
                  || timeout 5 curl -s4 --max-time 3 ip.sb 2>/dev/null; } || true)

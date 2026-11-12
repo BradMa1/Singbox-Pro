@@ -32,6 +32,12 @@ cat > "$TMP/bin/ip" <<'FAKE_IP'
 case " $* " in
     *" -6 "*) exit 0 ;;
 esac
+# FAKE_NIC_DOCKER=1: 把 docker 网桥排在物理网卡前面（真机上的常见顺序），
+# 用来验证「按接口名跳过网桥」而不是「按整行子串过滤」。
+if [ "${FAKE_NIC_DOCKER:-0}" = "1" ]; then
+    echo "3: br-994f372c53db: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP"
+    echo "    inet 172.18.0.1/16 brd 172.18.255.255 scope global br-994f372c53db"
+fi
 echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq state UP"
 echo "    inet ${FAKE_NIC_IP:-10.91.0.3}/24 brd 10.91.0.255 scope global eth0"
 FAKE_IP
@@ -97,6 +103,15 @@ echo "── 3. 入口 IP 探测（_get_public_ip）───────"
 _reset_ip
 got=$(FAKE_NIC_IP=82.152.161.198 FAKE_API_IP=1.1.1.1 _get_public_ip 2>/dev/null)
 _eq "网卡公网优先于 API" "82.152.161.198" "$got"
+
+# 3.1b 回归：旧写法 grep -v 'lo' 会连 "scope global" 的正常行一起过滤掉（"global" 含 "lo"），
+#      导致网卡探测永远为空。这里直接断言 _nic_ipv4 拿得到地址。
+got=$(FAKE_NIC_IP=82.152.161.198 _nic_ipv4 2>/dev/null)
+_eq "网卡 IPv4 能被取出（不被 scope global 里的 lo 误杀）" "82.152.161.198" "$got"
+
+# 3.1c docker 网桥排在物理网卡前面时必须跳过网桥（真机顺序常见）
+got=$(FAKE_NIC_DOCKER=1 FAKE_NIC_IP=82.152.161.198 _nic_ipv4 2>/dev/null)
+_eq "docker 网桥排在前面时跳过网桥" "82.152.161.198" "$got"
 
 # 3.2 网卡是 NAT 内网 → 回退 API；且必须告警（不能静默把 10.x 写进节点）
 _reset_ip
@@ -317,6 +332,100 @@ if grep -q -- '--accountemail' "$ACME_ARGV_LOG"; then
 else
     _ok "--issue 不再带 --accountemail"
 fi
+
+# 5.9 剩余天数计算：2 天期的自签证书应算出 1~3 天；文件不存在要返回非 0
+CD="$CT/certchk"; mkdir -p "$CD/sb"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CD/k.pem" -out "$CD/c.pem" \
+    -days 2 -subj "/CN=selftest" >/dev/null 2>&1
+rc=0
+HOME="$CT/home2" SINGBOX_DIR="$CD/sb" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        d=$(_cert_days_left "$2") || exit 3
+        { [ "$d" -ge 1 ] && [ "$d" -le 3 ]; } || exit 4
+        if _cert_days_left /nonexistent/x.pem; then exit 5; fi' _ "$ROOT" "$CD/c.pem" || rc=$?
+_eq "剩余天数计算 (_cert_days_left)" "0" "$rc"
+
+# 5.10 续期调度三态识别：cron / systemd timer / 都没有
+FB="$CT/fakebin"; mkdir -p "$FB"
+printf '#!/bin/sh\ncat "$CRON_OUT" 2>/dev/null\n' > "$FB/crontab"
+printf '#!/bin/sh\ncat "$TIMER_OUT" 2>/dev/null\n' > "$FB/systemctl"
+chmod +x "$FB/crontab" "$FB/systemctl"
+printf '47 2,8,14,20 * * * "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" > /dev/null\n' > "$CT/cron.txt"
+printf 'acme-renew.timer acme-renew.timer - Daily acme.sh renewal check\n' > "$CT/timer.txt"
+: > "$CT/empty.txt"
+rc=0
+CRON_OUT="$CT/cron.txt" TIMER_OUT="$CT/empty.txt" \
+HOME="$CT/home2" SINGBOX_DIR="$CD/sb" PATH="$FB:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        [ "$(_cert_renew_schedule)" = "cron" ] || exit 3' _ "$ROOT" || rc=$?
+_eq "调度识别: crontab 有 acme --cron → cron" "0" "$rc"
+
+rc=0
+CRON_OUT="$CT/empty.txt" TIMER_OUT="$CT/timer.txt" \
+HOME="$CT/home2" SINGBOX_DIR="$CD/sb" PATH="$FB:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        [ "$(_cert_renew_schedule)" = "timer" ] || exit 3' _ "$ROOT" || rc=$?
+_eq "调度识别: 无 cron 但有 acme-renew.timer → timer（香港机那种情况）" "0" "$rc"
+
+rc=0
+CRON_OUT="$CT/empty.txt" TIMER_OUT="$CT/empty.txt" \
+HOME="$CT/home2" SINGBOX_DIR="$CD/sb" PATH="$FB:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        if _cert_renew_schedule >/dev/null; then exit 3; fi
+        [ "$(_cert_renew_schedule || true)" = "none" ] || exit 4' _ "$ROOT" || rc=$?
+_eq "调度识别: 两者都没有 → none 且返回非 0" "0" "$rc"
+
+# 5.11 配置定位要兼容 <域名>_ecc/ 与 <域名>/ 两种布局（acme.sh ECC 证书用前者）
+AC="$CT/acmehome"; mkdir -p "$AC/.acme.sh/a.example_ecc" "$AC/.acme.sh/b.example"
+: > "$AC/.acme.sh/a.example_ecc/a.example.conf"
+: > "$AC/.acme.sh/b.example/b.example.conf"
+rc=0
+HOME="$AC" SINGBOX_DIR="$CD/sb" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        [ "$(_cert_conf_file a.example)" = "$HOME/.acme.sh/a.example_ecc/a.example.conf" ] || exit 3
+        [ "$(_cert_conf_file b.example)" = "$HOME/.acme.sh/b.example/b.example.conf" ] || exit 4
+        if _cert_conf_file c.example >/dev/null; then exit 5; fi' _ "$ROOT" || rc=$?
+_eq "acme 配置定位（_ecc 与普通布局）" "0" "$rc"
+
+# 5.12 自检必须能发现「cert.pem 与 acme 证书不一致」与「没注册 renew hook」
+SC="$CT/sc"; mkdir -p "$SC/sb/acme/d.example"
+cp "$CD/c.pem" "$SC/sb/acme/d.example/fullchain.pem"; cp "$CD/k.pem" "$SC/sb/acme/d.example/privkey.pem"
+cp "$CD/c.pem" "$SC/sb/cert.pem"
+printf '{"d.example":{"cert":"%s","key":"%s"}}\n' "$SC/sb/acme/d.example/fullchain.pem" "$SC/sb/acme/d.example/privkey.pem" > "$SC/sb/cert_metadata.json"
+mkdir -p "$SC/home/.acme.sh/d.example_ecc"
+printf "Le_RenewHook=''\nLe_ReloadCmd=''\n" > "$SC/home/.acme.sh/d.example_ecc/d.example.conf"
+rc=0
+CRON_OUT="$CT/cron.txt" TIMER_OUT="$CT/empty.txt" \
+HOME="$SC/home" SINGBOX_DIR="$SC/sb" CERT_META_FILE="$SC/sb/cert_metadata.json" \
+CERT_ACME_DIR="$SC/sb/acme" PATH="$FB:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        out=$(_cert_selfcheck)
+        printf "%s\n" "$out" | grep -q "未注册续期 hook" || exit 3
+        printf "%s\n" "$out" | grep -q "剩" || exit 4
+        printf "%s\n" "$out" | grep -q "同步" || exit 5' _ "$ROOT" || rc=$?
+_eq "自检: 无 hook 要告警、证书一致时要报同步" "0" "$rc"
+
+# 5.13 selfcheck 每条输出都必须是 "<ok|warn|fail>\t<文案>"（健康检查靠 tab 分列渲染）
+rc=0
+CRON_OUT="$CT/cron.txt" TIMER_OUT="$CT/empty.txt" \
+HOME="$SC/home" SINGBOX_DIR="$SC/sb" CERT_META_FILE="$SC/sb/cert_metadata.json" \
+CERT_ACME_DIR="$SC/sb/acme" PATH="$FB:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        _cert_selfcheck | while IFS=$'"'"'\t'"'"' read -r st msg; do
+            case "$st" in ok|warn|fail) ;; *) exit 3 ;; esac
+            [ -n "$msg" ] || exit 4
+        done' _ "$ROOT" || rc=$?
+_eq "自检输出格式 (状态\\t文案)" "0" "$rc"
+
+# 5.14 cert.pem 对齐后 serial 必须与 acme 证书一致（这就是事故的判据）
+rc=0
+HOME="$SC/home" SINGBOX_DIR="$SC/sb" CERT_ACME_DIR="$SC/sb/acme" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        _cert_sync_cert d.example || exit 3
+        s1=$(_cert_serial "$SINGBOX_DIR/cert.pem"); s2=$(_cert_serial "$SINGBOX_DIR/acme/d.example/fullchain.pem")
+        [ -n "$s1" ] && [ "$s1" = "$s2" ] || exit 4
+        [ "$(stat -c %a "$SINGBOX_DIR/cert.pem" 2>/dev/null || stat -f %Lp "$SINGBOX_DIR/cert.pem")" = "644" ] || exit 5' _ "$ROOT" || rc=$?
+_eq "证书同步后 cert.pem 与 acme 序列号一致且权限 644" "0" "$rc"
 
 echo ""
 echo "────────────────────────────────────────────"
