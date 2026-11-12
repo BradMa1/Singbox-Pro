@@ -427,6 +427,33 @@ HOME="$SC/home" SINGBOX_DIR="$SC/sb" CERT_ACME_DIR="$SC/sb/acme" PATH="$CT/bin:$
         [ "$(stat -c %a "$SINGBOX_DIR/cert.pem" 2>/dev/null || stat -f %Lp "$SINGBOX_DIR/cert.pem")" = "644" ] || exit 5' _ "$ROOT" || rc=$?
 _eq "证书同步后 cert.pem 与 acme 序列号一致且权限 644" "0" "$rc"
 
+# 5.15 _cert_ensure_hook 必须幂等：没 hook 才注册；已有 hook 不重复注册
+#      （RenewHook 与 ReloadCmd 各存一份会让续期时白重启两遍 sing-box）
+AH="$CT/acme4"; mkdir -p "$AH/home/.acme.sh/e.example_ecc" "$AH/sb/acme/e.example"
+printf "Le_RenewHook=''\nLe_ReloadCmd=''\n" > "$AH/home/.acme.sh/e.example_ecc/e.example.conf"
+: > "$CT/hook.log"
+rc=0
+ACME_ARGV_LOG="$CT/hook.log" ACME_BIN="$AD/home/.acme.sh/acme.sh" ACME_HOME="$AH/home/.acme.sh" \
+HOME="$AH/home" SINGBOX_DIR="$AH/sb" CERT_ACME_DIR="$AH/sb/acme" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        _cert_ensure_hook e.example || exit 3' _ "$ROOT" || rc=$?
+_eq "无 hook 时会注册（_cert_ensure_hook）" "0" "$rc"
+if grep -q -- '--install-cert' "$CT/hook.log" && grep -q -- '--reloadcmd' "$CT/hook.log"; then
+    _ok "注册用的参数是 --install-cert + --reloadcmd"
+else
+    _no "注册参数不对（应 --install-cert + --reloadcmd）"
+fi
+
+before=$(grep -c . "$CT/hook.log" 2>/dev/null || echo 0)
+printf "Le_RenewHook='__ACME_BASE64__START_eA__ACME_BASE64__END_'\n" > "$AH/home/.acme.sh/e.example_ecc/e.example.conf"
+rc=0
+ACME_ARGV_LOG="$CT/hook.log" ACME_BIN="$AD/home/.acme.sh/acme.sh" ACME_HOME="$AH/home/.acme.sh" \
+HOME="$AH/home" SINGBOX_DIR="$AH/sb" CERT_ACME_DIR="$AH/sb/acme" PATH="$CT/bin:$PATH" \
+    bash -c 'set -euo pipefail; . "$1/lib/core.sh"; . "$1/lib/cert.sh"
+        _cert_ensure_hook e.example || exit 3' _ "$ROOT" || rc=$?
+after=$(grep -c . "$CT/hook.log" 2>/dev/null || echo 0)
+_eq "已有 hook 时不重复注册" "$before" "$after"
+
 echo ""
 echo "────────────────────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

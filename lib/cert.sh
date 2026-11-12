@@ -254,9 +254,20 @@ _cert_renew_hook_cmd() {
 }
 
 # 幂等注册 install-cert + renew hook (老证书没 hook 时靠它补齐)
+#
+# 只在「确实没有 hook」时注册：acme.sh 把 hook 以 base64 存进 conf，
+# 老版本脚本签的证书里 Le_RenewHook / Le_ReloadCmd 是空串（这才是会静默失效的那批）。
+# 已有任一非空 hook 就认为能同步，不再重复注册 —— 否则 RenewHook 和 ReloadCmd
+# 各跑一次 cp + restart，续期时会白重启两遍 sing-box。
 _cert_ensure_hook() {
-    local domain="$1" hook
+    local domain="$1" hook conf
     [ -n "$domain" ] || return 1
+
+    conf="$(_cert_conf_file "$domain" 2>/dev/null || true)"
+    if [ -n "$conf" ] && grep -qE "^Le_(RenewHook|ReloadCmd)='[^']" "$conf" 2>/dev/null; then
+        return 0
+    fi
+
     if [ ! -x "${ACME_BIN:-}" ]; then
         local f
         f="$(_cert_find_acme 2>/dev/null || true)"
@@ -267,14 +278,14 @@ _cert_ensure_hook() {
     if "$ACME_BIN" --install-cert -d "$domain" \
         --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
         --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
-        --renew-hook "$hook" >/dev/null 2>&1; then
+        --reloadcmd "$hook" >/dev/null 2>&1; then
         return 0
     fi
     # ECC 证书目录是 <域名>_ecc/，部分 acme.sh 版本需要显式 --ecc
     "$ACME_BIN" --install-cert -d "$domain" --ecc \
         --fullchain-file "${CERT_ACME_DIR}/${domain}/fullchain.pem" \
         --key-file "${CERT_ACME_DIR}/${domain}/privkey.pem" \
-        --renew-hook "$hook" >/dev/null 2>&1
+        --reloadcmd "$hook" >/dev/null 2>&1
 }
 
 # 找到某个域名的 acme 配置 (兼容 <域名>/ 与 <域名>_ecc/ 两种布局)
